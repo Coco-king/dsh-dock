@@ -112,10 +112,11 @@ DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 
 - **右键发送引用**：`@路径` 引用由注入脚本写入 WebUI 输入框——dsh 输入框是 React 受控
   组件，直接改 `value` 会被覆盖，因此用原生 `value` setter + 派发 `input` 事件更新草稿；
   页面未就绪时引用先暂存，主框架 `onLoadEnd` 后自动补发
-- 停止时：WSL 模式通过 `pkill -f "[w]eb --port <port>"` 精确结束该端口的 dsh 进程，
-  Windows 模式通过 `taskkill /T /F` 终止进程树，均不影响其他进程
-- **退出清理三层保障**（避免"IDE 退出了 dsh 还在后台"）：IDEA 退出流程的
-  `AppLifecycleListener` 早期回调 + JVM shutdown hook 兜底 + 独立 PowerShell 看门狗
+- **只停自己启动的 dsh**：WSL 模式启动时把 dsh 的真实 PID 写入标识文件（`dsh-owner-*.pid`），
+  停止/退出清理时 `kill` 该 PID；Windows 模式 `taskkill` 本插件持有的进程树。
+  **外部启动的同端口 dsh（如手动 `ldsh.cmd`）绝不会被误杀**
+- **退出清理三层保障**（异步、不拖慢 IDEA 关闭）：IDEA 退出流程的 `AppLifecycleListener`
+  早期回调（异步触发，不阻塞退出）+ JVM shutdown hook 兜底 + 独立 PowerShell 看门狗
   （监视 IDE 进程，IDE 消失且端口仍开时自动执行停止脚本；即使 IDE 被强杀/崩溃也会清理）
 
 ## 常见问题
