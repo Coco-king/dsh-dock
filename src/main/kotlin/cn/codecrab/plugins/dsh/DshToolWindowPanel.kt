@@ -1,5 +1,8 @@
 package cn.codecrab.plugins.dsh
 
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
+import com.intellij.notification.Notifications
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -77,6 +80,18 @@ class DshToolWindowPanel(
     /** 最近一次工作空间同步得到的当前项目 sessionIds (供 onLoadStart 判断持久化会话归属) */
     @Volatile
     private var syncSessionIds: List<String>? = null
+
+    /** 一次启动尝试是否正在进行 (STARTING 置位, RUNNING/STOPPING/失败时清除), 用于识别"启动失败" */
+    @Volatile
+    private var startInProgress: Boolean = false
+
+    /** 本次启动日志里是否出现过"找不到 dsh"警告 (决定失败通知的内容) */
+    @Volatile
+    private var dshMissingWarned: Boolean = false
+
+    /** 本次启动日志里是否出现过 WSL 子系统错误 (如 Wsl/Service/E_UNEXPECTED) */
+    @Volatile
+    private var wslErrorSeen: Boolean = false
 
     init {
         isOpaque = false
@@ -517,6 +532,9 @@ class DshToolWindowPanel(
             updateButtons(state)
             when (state) {
                 DshServer.State.RUNNING -> {
+                    startInProgress = false
+                    dshMissingWarned = false
+                    wslErrorSeen = false
                     statusLabel.text = STR_RUNNING.format(settings.port)
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
                     if (jcefAvailable) {
@@ -534,22 +552,69 @@ class DshToolWindowPanel(
                     }
                 }
                 DshServer.State.STARTING -> {
+                    startInProgress = true
                     statusLabel.text = STR_STARTING
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                 }
                 DshServer.State.STOPPING -> {
+                    // 用户主动停止 (含启动过程中点停止), 不算启动失败
+                    startInProgress = false
                     statusLabel.text = STR_STOPPING
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                 }
                 DshServer.State.IDLE -> {
+                    val failed = startInProgress
+                    val missingDsh = dshMissingWarned
+                    val wslError = wslErrorSeen
+                    startInProgress = false
                     statusLabel.text = STR_IDLE
                     statusLabel.foreground = JBColor.GRAY
                     externalBrowserOpenedForSession = false
                     webUiLoaded = false
                     // 页面视为过期 (可能还停留在旧 WebUI / 已失效页面), 重启后需重新加载再注入
                     pageLoaded = false
+                    // 启动尝试失败 (而非主动停止): 弹通知提示原因
+                    if (failed) {
+                        notifyStartFailed(missingDsh, wslError)
+                    }
+                    dshMissingWarned = false
+                    wslErrorSeen = false
                 }
             }
+        }
+    }
+
+    /** 启动失败时弹系统通知: 区分"未安装 dsh" / "WSL 子系统错误" / 其他失败原因 */
+    private fun notifyStartFailed(missingDsh: Boolean, wslError: Boolean) {
+        try {
+            val group = NotificationGroupManager.getInstance().getNotificationGroup("Dsh")
+            val content = when {
+                missingDsh -> buildString {
+                    append("未检测到 dsh 命令, 请先安装 @deepseek-ai/dsh:\n")
+                    append(if (settings.launchMode == "wsl") {
+                        "在 WSL 终端执行: npm i -g @deepseek-ai/dsh"
+                    } else {
+                        "在 Windows 执行: npm i -g @deepseek-ai/dsh"
+                    })
+                    append("\n安装完成后重新点击「启动」。详细日志见工具窗口底部日志面板。")
+                }
+                wslError -> buildString {
+                    append("WSL 启动失败 (Wsl/Service/E_UNEXPECTED 等子系统错误)。\n")
+                    append("请先在 Windows 运行 wsl --shutdown 后重试;\n")
+                    append("仍失败可重启 WSL 服务 (管理员 PowerShell: net stop LxssManager && net start LxssManager)。")
+                }
+                else -> buildString {
+                    append("dsh 启动失败, 端口 ${settings.port} 未就绪。\n")
+                    if (settings.launchMode == "wsl") {
+                        append("若日志含 WSL 错误 (如 Wsl/Service/E_UNEXPECTED), 请先在 Windows 运行 wsl --shutdown 后重试;\n")
+                        append("仍失败可重启 WSL 服务 (管理员 PowerShell: net stop LxssManager && net start LxssManager)。\n")
+                    }
+                    append("详细日志见工具窗口底部日志面板。")
+                }
+            }
+            Notifications.Bus.notify(group.createNotification("Dsh 启动失败", content, NotificationType.ERROR), project)
+        } catch (t: Throwable) {
+            appendLog("无法弹出启动失败通知: ${t.message}")
         }
     }
 
@@ -566,6 +631,16 @@ class DshToolWindowPanel(
     }
 
     private fun appendLog(line: String) {
+        // 日志里出现"找不到 dsh"警告 -> 标记, 启动失败通知里给出对应提示
+        if (line.contains("找不到 dsh")) {
+            dshMissingWarned = true
+        }
+        // 出现 WSL 子系统错误标识 (如 Wsl/Service/E_UNEXPECTED) -> 标记, 通知里给 WSL 修复建议
+        if (line.contains("Wsl/") || line.contains("E_UNEXPECTED") ||
+            line.contains("0x80040326") || line.contains("LxssManager")
+        ) {
+            wslErrorSeen = true
+        }
         SwingUtilities.invokeLater {
             if (project.isDisposed) return@invokeLater
             logArea.append(line)

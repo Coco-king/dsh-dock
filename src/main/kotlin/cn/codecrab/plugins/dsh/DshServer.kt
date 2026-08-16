@@ -170,7 +170,9 @@ object DshServer {
             appendLine("  fi")
             appendLine("fi")
             appendLine("if ! command -v dsh >/dev/null 2>&1; then")
-            appendLine("  echo \"[dsh] WARNING: 在 WSL 中找不到 dsh 命令 (请确认 PATH 或已通过 nvm 安装)\"")
+            appendLine("  echo \"[dsh] WARNING: 在 WSL 中找不到 dsh 命令, 请先安装 @deepseek-ai/dsh\"")
+            appendLine("  echo \"[dsh] 安装命令: npm i -g @deepseek-ai/dsh   (nvm 环境: nvm use default && npm i -g @deepseek-ai/dsh)\"")
+            appendLine("  exit 1")
             appendLine("fi")
             appendLine("echo \"[dsh] starting dsh web  (project: ${wslProject ?: "\$HOME"}, port: $port)\"")
             // 后台运行并记录 PID (不再 exec): 父 bash 保持存活, 退出清理按 PID 精确停止
@@ -218,7 +220,9 @@ object DshServer {
                 appendLine("#!/usr/bin/env bash")
                 if (cwd != null) appendLine("cd ${WslSupport.shellSingleQuote(cwd)} 2>/dev/null || exit 1")
                 appendLine("if ! command -v dsh >/dev/null 2>&1; then")
-                appendLine("  echo \"[dsh] WARNING: 在 PATH 中找不到 dsh 命令 (npm i -g @deepseek-ai/dsh)\"")
+                appendLine("  echo \"[dsh] WARNING: 在 PATH 中找不到 dsh 命令, 请先安装 @deepseek-ai/dsh\"")
+                appendLine("  echo \"[dsh] 安装命令: npm i -g @deepseek-ai/dsh\"")
+                appendLine("  exit 1")
                 appendLine("fi")
                 if (extra.isNotEmpty()) appendLine("exec dsh web --port $port $extra") else appendLine("exec dsh web --port $port")
             }
@@ -233,7 +237,7 @@ object DshServer {
             )
             stopCmdPath = stopSh.absolutePath
             drain(p, onLog)
-            watch(p, port, onLog)
+            watch(p, port, onLog, onState)
             waitForReadyInThread(port, p, onLog, onState)
             return
         }
@@ -247,8 +251,9 @@ object DshServer {
             }
             appendLine("where dsh >nul 2>&1")
             appendLine("if errorlevel 1 (")
-            appendLine("  echo [dsh] WARNING: 在 Windows PATH 中找不到 dsh 命令")
-            appendLine("  echo [dsh] 请先安装: npm i -g @deepseek-ai/dsh")
+            appendLine("  echo [dsh] WARNING: 在 Windows PATH 中找不到 dsh 命令, 请先安装 @deepseek-ai/dsh")
+            appendLine("  echo [dsh] 安装命令: npm i -g @deepseek-ai/dsh")
+            appendLine("  exit /b 1")
             appendLine(")")
             if (extra.isNotEmpty()) {
                 appendLine("dsh web --port $port $extra")
@@ -278,7 +283,7 @@ object DshServer {
         stopCmdPath = prepareStopScript(port, mode)
         startExitWatchdog(stopCmdPath!!, port)
         drain(p, onLog)
-        watch(p, port, onLog)
+        watch(p, port, onLog, onState)
         waitForReadyInThread(port, p, onLog, onState)
     }
 
@@ -299,7 +304,7 @@ object DshServer {
         reader(p.errorStream, "[dsh!]")
     }
 
-    private fun watch(p: Process, port: Int, onLog: (String) -> Unit) {
+    private fun watch(p: Process, port: Int, onLog: (String) -> Unit, onState: (State) -> Unit) {
         Thread({
             try {
                 val code = p.waitFor()
@@ -309,7 +314,10 @@ object DshServer {
                         onLog("启动包装进程已退出(exit=$code), 但端口 $port 仍在监听, 保持连接")
                     } else {
                         onLog("dsh 进程已退出 (exit=$code)")
-                        state = State.IDLE
+                        synchronized(lock) {
+                            if (state == State.STARTING || state == State.RUNNING) state = State.IDLE
+                        }
+                        onState(State.IDLE)
                     }
                 }
             } catch (_: InterruptedException) {
