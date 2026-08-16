@@ -82,7 +82,7 @@ DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 
 | 自动启动 | 打开工具窗口时自动启动 dsh | 开启 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
-| WebUI 语言 | 单选：跟随 IDE/浏览器 / 简体中文 / English | 跟随 |
+| WebUI 语言 | 单选：跟随 IDE 语言 / 简体中文 / English（JCEF 默认 en-US，跟随模式下按 IDE 语言自动注入中文） | 跟随 |
 | 附加参数 | 追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 
 > 兼容旧版本：插件设置是通用化的，WSL 发行版、NVM 路径、ldsh.cmd 等本机细节

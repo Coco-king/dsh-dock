@@ -19,3 +19,5 @@
   并在加载前清除不属于当前项目的持久化会话选择（避免页面恢复旧项目会话）
 - 启动失败提示：未安装 dsh（或启动失败）时快速失败并弹出「Dsh 启动失败」通知，
   提示安装命令 `npm i -g @deepseek-ai/dsh`（WSL / Windows 模式均覆盖）
+- WebUI 语言"跟随"模式改为跟随 IDE 语言：中文 IDE（user.language=zh）自动注入中文，
+  不再受 JCEF 默认 en-US 影响

@@ -243,7 +243,7 @@ class DshToolWindowPanel(
     private fun injectUiThemeLocaleOverride(browser: CefBrowser) {
         if (!settings.themeFollowIde && settings.forceLocale.isBlank()) return
         val dark = settings.themeFollowIde && DshToolWindowFactory.isDarkUi()
-        val langs = if (settings.forceLocale.isBlank()) emptyList() else {
+        val langs = if (settings.forceLocale.isBlank()) followIdeLanguages() else {
             val l = settings.forceLocale.trim()
             if (l.startsWith("zh", ignoreCase = true)) listOf(l, "zh", "en")
             else listOf(l, "en")
@@ -253,6 +253,16 @@ class DshToolWindowPanel(
         } catch (t: Throwable) {
             appendLog("WebUI 主题/语言注入失败: ${t.message}")
         }
+    }
+
+    /**
+     * "跟随 IDE/浏览器"模式下推导 dsh 语言: JCEF 的 `navigator.languages` 默认是 en-US,
+     * 与 IDE 界面语言无关, 必须显式注入。IDE 是中文 (user.language 以 zh 开头) 时注入中文;
+     * 其他语言保持 dsh 默认 (英文)。
+     */
+    private fun followIdeLanguages(): List<String> {
+        val lang = System.getProperty("user.language")?.trim()?.lowercase() ?: return emptyList()
+        return if (lang.startsWith("zh")) listOf("zh", "en") else emptyList()
     }
 
     private fun uiOverrideScript(dark: Boolean, langs: List<String>): String {
