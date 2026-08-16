@@ -499,7 +499,7 @@ class DshToolWindowPanel(
             appendLog("已在系统浏览器打开: $url")
         } else {
             appendLog("端口 ${settings.port} 未就绪, 请先启动 dsh")
-            Messages.showWarningDialog(project, "dsh 尚未启动, 端口 ${settings.port} 未就绪。\n请先点击「启动」。", "Dsh")
+            Messages.showWarningDialog(project, "dsh 尚未启动, 端口 ${settings.port} 未就绪。\n请先点击「启动」。", "Dsh Dock")
         }
     }
 

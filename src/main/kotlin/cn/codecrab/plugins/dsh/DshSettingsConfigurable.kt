@@ -14,7 +14,7 @@ import javax.swing.JRadioButton
 import javax.swing.JTextField
 
 /**
- * 插件设置页 (Settings -> Tools -> Dsh (DeepSeek Harness))。
+ * 插件设置页 (Settings -> Other Settings -> Dsh Dock)。
  *
  * 只包含通用配置, 不绑定任何本机路径。
  */
@@ -33,7 +33,7 @@ class DshSettingsConfigurable : Configurable {
     private var localeZhField: JRadioButton? = null
     private var localeEnField: JRadioButton? = null
 
-    override fun getDisplayName(): @NlsContexts.ConfigurableName String = "Dsh (DeepSeek Harness)"
+    override fun getDisplayName(): @NlsContexts.ConfigurableName String = "Dsh Dock"
 
     override fun createComponent(): JComponent? {
         val panel = JPanel(GridBagLayout())

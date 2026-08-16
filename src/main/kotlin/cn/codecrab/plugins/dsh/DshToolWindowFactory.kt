@@ -24,18 +24,31 @@ class DshToolWindowFactory : ToolWindowFactory {
 
     override fun init(toolWindow: ToolWindow) {
         toolWindow.setIcon(whaleIcon())
+        // 工具窗口显示名: 默认取 id "Dsh", 悬浮提示/标签页/View 菜单读的是 title / stripeTitle,
+        // 这里全部设为与插件名一致的 "Dsh Dock"
+        toolWindow.setTitle("Dsh Dock")
+        try {
+            toolWindow.setStripeTitle("Dsh Dock")
+        } catch (_: Throwable) {
+            // 旧版 IDE 可能没有 setStripeTitle, 忽略 (title 兜底)
+        }
     }
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = DshToolWindowPanel(project, toolWindow.disposable)
         DshToolWindowRegistry.register(project, panel)
         toolWindow.component.add(panel)
+        // 标签页显示名也同步 (部分 IDE 版本标签/tooltip 取自 content display name)
+        try {
+            toolWindow.contentManager.getContent(0)?.setDisplayName("Dsh Dock")
+        } catch (_: Throwable) {
+        }
     }
 
     companion object {
 
         /** 工具窗口 id (与 plugin.xml 中 toolWindow 的 id 一致) */
-        const val TOOL_WINDOW_ID = "Dsh"
+        const val TOOL_WINDOW_ID = "Dsh Dock"
 
         /** 菜单项标准图标尺寸 (IDEA 右键菜单图标为 16x16) */
         private const val MENU_ICON_SIZE = 16

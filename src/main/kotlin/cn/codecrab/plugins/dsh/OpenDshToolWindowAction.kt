@@ -12,7 +12,7 @@ class OpenDshToolWindowAction : AnAction() {
 
     override fun actionPerformed(e: AnActionEvent) {
         val project: Project = e.project ?: return
-        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Dsh")
+        val toolWindow = ToolWindowManager.getInstance(project).getToolWindow(DshToolWindowFactory.TOOL_WINDOW_ID)
         if (toolWindow != null) {
             toolWindow.activate(null)
         }
