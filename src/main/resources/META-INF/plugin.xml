@@ -1,0 +1,54 @@
+<!-- Plugin Configuration File. Read more: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
+<idea-plugin>
+    <id>cn.codecrab.plugins.dsh</id>
+    <name>Dsh - DeepSeek Harness</name>
+    <vendor email="codecrab@example.com" url="https://github.com/deepseek-ai/deepseek-harness">codecrab</vendor>
+
+    <!-- 仅依赖平台模块, 可在所有 JetBrains IDE 中安装 -->
+    <depends>com.intellij.modules.platform</depends>
+
+    <resource-bundle>messages.DshBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationService serviceImplementation="cn.codecrab.plugins.dsh.DshSettingsState"/>
+        <notificationGroup id="Dsh" displayType="BALLOON"/>
+        <toolWindow
+            id="Dsh"
+            anchor="right"
+            icon="/icons/dshWhaleBlack.svg"
+            factoryClass="cn.codecrab.plugins.dsh.DshToolWindowFactory"/>
+        <applicationConfigurable
+            id="cn.codecrab.plugins.dsh.settings"
+            parentId="tools"
+            displayName="Dsh (DeepSeek Harness)"
+            instance="cn.codecrab.plugins.dsh.DshSettingsConfigurable"/>
+    </extensions>
+
+    <actions>
+        <action
+            id="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
+            class="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
+            text="打开 DeepSeek Harness (Dsh)"
+            description="在侧边栏打开 Dsh 工具窗口，运行 dsh web 并显示 WebUI">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+        </action>
+
+        <!-- 编辑器右键: 发送选中代码的行范围引用到 Dsh 输入框 -->
+        <action
+            id="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
+            class="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
+            text="发送选中代码到 Dsh"
+            description="把选中代码的 @路径#L行号 引用发送到 Dsh 输入框">
+            <add-to-group group-id="EditorPopupMenu" anchor="first"/>
+        </action>
+
+        <!-- 项目视图右键: 发送文件路径引用到 Dsh 输入框 -->
+        <action
+            id="cn.codecrab.plugins.dsh.SendFileToDshAction"
+            class="cn.codecrab.plugins.dsh.SendFileToDshAction"
+            text="发送文件路径到 Dsh"
+            description="把文件路径引用发送到 Dsh 输入框">
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="first"/>
+        </action>
+    </actions>
+</idea-plugin>

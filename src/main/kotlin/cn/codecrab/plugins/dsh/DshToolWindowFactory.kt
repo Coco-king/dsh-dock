@@ -1,0 +1,96 @@
+package cn.codecrab.plugins.dsh
+
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.IconLoader
+import com.intellij.openapi.util.ScalableIcon
+import com.intellij.openapi.wm.ToolWindow
+import com.intellij.openapi.wm.ToolWindowFactory
+import java.awt.Component
+import java.awt.Graphics
+import java.awt.Image
+import java.awt.image.BufferedImage
+import javax.swing.Icon
+import javax.swing.ImageIcon
+import javax.swing.UIManager
+
+/**
+ * Dsh 工具窗口工厂: 右侧工具栏的黑色鲸鱼图标 + 侧边栏内容。
+ *
+ * 图标取自 dsh WebUI 的 favicon (鲸鱼), 深色主题下自动切换为白色版本,
+ * 与 dsh favicon 的 prefers-color-scheme 行为一致。
+ * 主题明暗判断用纯 Swing 的 UIManager 色板亮度, 不依赖任何平台 API, 跨版本稳定。
+ */
+class DshToolWindowFactory : ToolWindowFactory {
+
+    override fun init(toolWindow: ToolWindow) {
+        toolWindow.setIcon(whaleIcon())
+    }
+
+    override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
+        val panel = DshToolWindowPanel(project, toolWindow.disposable)
+        DshToolWindowRegistry.register(project, panel)
+        toolWindow.component.add(panel)
+    }
+
+    companion object {
+
+        /** 工具窗口 id (与 plugin.xml 中 toolWindow 的 id 一致) */
+        const val TOOL_WINDOW_ID = "Dsh"
+
+        /** 菜单项标准图标尺寸 (IDEA 右键菜单图标为 16x16) */
+        private const val MENU_ICON_SIZE = 16
+
+        /** 根据当前主题选择黑色/白色鲸鱼图标并栅格化 (兼容旧版 SVG 工具窗口图标渲染问题) */
+        fun whaleIcon(): ScalableIcon {
+            val resource = if (isDarkUi()) "icons/dshWhaleWhite.svg" else "icons/dshWhaleBlack.svg"
+            return RasterizedScalableIcon(IconLoader.getIcon(resource, DshToolWindowFactory::class.java))
+        }
+
+        /**
+         * 右键菜单用的小鲸鱼图标: 鲸鱼 SVG 原始 50x50, 工具窗口图标会被平台缩放,
+         * 但菜单图标按原始尺寸渲染, 50px 在菜单里过大, 这里缩放到标准 16x16。
+         */
+        fun menuWhaleIcon(): Icon {
+            val src = whaleIcon()
+            return src.scale(MENU_ICON_SIZE.toFloat() / src.iconWidth)
+        }
+
+        /**
+         * 通过 UIManager 面板背景色亮度判断当前是否为深色主题。
+         * 不依赖 EditorColorsScheme.isDark 等在新旧版本间变动的 API。
+         */
+        fun isDarkUi(): Boolean {
+            val bg = UIManager.getColor("Panel.background") ?: return false
+            val luminance = 0.299 * bg.red + 0.587 * bg.green + 0.114 * bg.blue
+            return luminance < 128
+        }
+    }
+
+    private class RasterizedScalableIcon(source: Icon) : ScalableIcon {
+
+        private val raster: ImageIcon
+
+        init {
+            val img = BufferedImage(source.iconWidth, source.iconHeight, BufferedImage.TYPE_INT_ARGB)
+            val g = img.createGraphics()
+            source.paintIcon(null, g, 0, 0)
+            g.dispose()
+            raster = ImageIcon(img)
+        }
+
+        override fun paintIcon(c: Component?, g: Graphics, x: Int, y: Int) {
+            raster.paintIcon(c, g, x, y)
+        }
+
+        override fun getIconWidth() = raster.iconWidth
+        override fun getIconHeight() = raster.iconHeight
+
+        override fun getScale() = 1.0f
+
+        override fun scale(scale: Float): Icon {
+            val w = (iconWidth * scale).toInt()
+            val h = (iconHeight * scale).toInt()
+            return ImageIcon(raster.image.getScaledInstance(w, h, Image.SCALE_SMOOTH))
+        }
+    }
+}

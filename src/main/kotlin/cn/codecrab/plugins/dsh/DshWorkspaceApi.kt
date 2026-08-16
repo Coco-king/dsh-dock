@@ -1,0 +1,212 @@
+package cn.codecrab.plugins.dsh
+
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import com.intellij.openapi.diagnostic.Logger
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.time.Instant
+import java.util.UUID
+
+/**
+ * dsh 工作空间同步: 通过 dsh WebUI 的 `/api` RPC 通道, 确保"当前项目"成为会话的工作空间。
+ *
+ * 背景: dsh 的工作空间是**持久化注册表** (存于 ~/.dsh/storages, 跨进程重启保留),
+ * WebUI 启动时自动选中"最近活跃的工作空间" (按会话 updatedAt 排序, 见 client-runtime 的
+ * `recentWorkspace`), **与 dsh 进程的启动目录无关**。因此插件只靠 `cd <项目>` 无法让会话
+ * 落在当前项目上 —— 需要在页面加载前通过 API 把项目工作空间注册出来并让它成为最近的。
+ *
+ * 传输格式 (与 dsh 客户端完全一致):
+ *   POST /api/<method>
+ *   body: {"type":"client-request","rpcId":"<uuid>","method":"<method>","payload":{...}}
+ * 请求经 host 的 loopback 信任围栏放行 (Host 为 127.0.0.1/localhost 且不带 Origin 头)。
+ *
+ * 流程 (每次加载 WebUI 前调用一次, 幂等):
+ *  1. workspace.create {path}            -> 注册项目工作空间 (已存在则幂等返回, created=false)
+ *  2. 若刚创建 -> 完成 (新工作空间 createdAt 最新, 自动成为"最近")
+ *  3. 若已存在但当前不是"最近工作空间" -> session.create {workspaceId}
+ *     (新会话 updatedAt 最新, 使其所在工作空间成为"最近"), 页面加载后就会落在项目上
+ */
+object DshWorkspaceApi {
+
+    private val LOG = Logger.getInstance(DshWorkspaceApi::class.java)
+
+    private class RpcResult(val ok: Boolean, val value: JsonObject?)
+
+    /** 工作空间同步结果: workspaceId + 该工作空间当前的 sessionIds (供调用方判断持久化会话归属) */
+    data class WorkspaceSyncResult(val workspaceId: String, val sessionIds: List<String>)
+
+    /**
+     * 确保项目工作空间存在且为"最近", 返回同步结果; 失败返回 null (调用方按现状继续)。
+     * 附带做"空白会话卫生": 归档项目工作空间里遗留的空白会话 (空会话, 无内容损失),
+     * 避免 dsh 的 connectWorkspace 一直复用旧空白会话、导致"新会话"点了没反应。
+     * @param timeoutMs 整个同步过程的软超时 (避免 dsh API 异常时拖慢页面加载)
+     */
+    fun ensureProjectWorkspace(port: Int, projectDshPath: String?, timeoutMs: Long = 8000): WorkspaceSyncResult? {
+        if (projectDshPath.isNullOrBlank()) return null
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val create = rpcWithin(port, "workspace.create", "{\"path\":${jsonString(projectDshPath)}}", deadline)
+            ?: return null
+        if (!create.ok) {
+            LOG.warn("workspace.create failed: ${create.value}")
+            return null
+        }
+        val value = create.value ?: return null
+        val workspace = value.getAsJsonObject("workspace")
+        val workspaceId = workspace.get("workspaceId").asString
+        val sessionIds = workspace.getAsJsonArray("sessionIds").mapNotNull {
+            it.asString.takeIf(String::isNotBlank)
+        }
+        val created = value.get("created").asBoolean
+        if (!created) {
+            // 工作空间已存在: 只有当它当前不是"最近工作空间"时才新建会话提升其新鲜度
+            val recent = computeRecentWorkspaceId(port, deadline) ?: return WorkspaceSyncResult(workspaceId, sessionIds)
+            if (recent != workspaceId) {
+                val bump = rpcWithin(port, "session.create", "{\"workspaceId\":${jsonString(workspaceId)}}", deadline)
+                if (bump?.ok == true) {
+                    // 新会话立即可归档: 归档不影响"最近"计算 (session.list 含已归档会话),
+                    // 但 connectWorkspace 复用时跳过已归档, 避免它成为被反复复用的旧空白
+                    bump.value?.get("sessionId")?.asString?.let { archiveSession(port, it, deadline) }
+                } else {
+                    LOG.warn("session.create (recency bump) failed: ${bump?.value}")
+                }
+            }
+        }
+        // 空白会话卫生: 归档项目工作空间里所有遗留空白会话
+        archiveBlankSessions(port, sessionIds, deadline)
+        return WorkspaceSyncResult(workspaceId, sessionIds)
+    }
+
+    /** 归档项目工作空间里的空白会话 (空会话无内容, 归档只是从侧边栏隐藏) */
+    private fun archiveBlankSessions(port: Int, workspaceSessionIds: List<String>, deadline: Long) {
+        if (workspaceSessionIds.isEmpty()) return
+        val s = rpcWithin(port, "session.list", "{}", deadline) ?: return
+        val items = s.value?.getAsJsonArray("items") ?: return
+        for (el in items) {
+            val o = el.asJsonObject
+            val sid = o.get("sessionId")?.asString ?: continue
+            if (sid in workspaceSessionIds && o.get("blank")?.asBoolean == true) {
+                archiveSession(port, sid, deadline)
+            }
+        }
+    }
+
+    private fun archiveSession(port: Int, sessionId: String, deadline: Long) {
+        if (System.currentTimeMillis() >= deadline) return
+        val r = rpcWithin(port, "workspace.archiveSession", "{\"sessionId\":${jsonString(sessionId)}}", deadline)
+        if (r?.ok != true) LOG.warn("workspace.archiveSession failed: ${r?.value}")
+    }
+
+    /** 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者 */
+    private fun computeRecentWorkspaceId(port: Int, deadline: Long): String? {
+        val ws = rpcWithin(port, "workspace.list", "{}", deadline) ?: return null
+        val s = rpcWithin(port, "session.list", "{}", deadline) ?: return null
+        val wsItems = ws.value?.getAsJsonArray("items") ?: return null
+        val sessionItems = s.value?.getAsJsonArray("items") ?: return null
+
+        val updatedAt = HashMap<String, Long>()
+        for (el in sessionItems) {
+            val o = el.asJsonObject
+            val id = o.get("sessionId")?.asString ?: continue
+            val ts = o.get("updatedAt")?.asLong ?: continue
+            updatedAt[id] = ts
+        }
+
+        var selected: String? = null
+        var selectedTime = Long.MIN_VALUE
+        for (el in wsItems) {
+            val o = el.asJsonObject
+            val id = o.get("workspaceId")?.asString ?: continue
+            var latest = Long.MIN_VALUE
+            o.getAsJsonArray("sessionIds").forEach { sid ->
+                updatedAt[sid.asString]?.let { if (it > latest) latest = it }
+            }
+            if (latest == Long.MIN_VALUE) {
+                latest = try {
+                    Instant.parse(o.get("createdAt").asString).toEpochMilli()
+                } catch (_: Throwable) {
+                    Long.MIN_VALUE
+                }
+            }
+            if (selected == null || latest > selectedTime) {
+                selected = id
+                selectedTime = latest
+            }
+        }
+        return selected
+    }
+
+    /** 在截止时间前调用一次 dsh /api RPC; 传输层失败返回 null, 业务失败返回 ok=false 的结果 */
+    private fun rpcWithin(port: Int, method: String, payload: String, deadline: Long): RpcResult? {
+        if (System.currentTimeMillis() >= deadline) return null
+        val body = buildString {
+            append("{\"type\":\"client-request\",\"rpcId\":")
+            append(jsonString(UUID.randomUUID().toString()))
+            append(",\"method\":")
+            append(jsonString(method))
+            append(",\"payload\":")
+            append(payload)
+            append("}")
+        }
+        val text = post(port, method, body) ?: return null
+        return try {
+            // 用实例 parse(String) (Gson 2.8 与 2.10+ 都有; 静态 parseString 仅 2.10+)
+            val root = JsonParser().parse(text).asJsonObject
+            val result = root.getAsJsonObject("result")
+            if (result.get("ok").asBoolean) {
+                RpcResult(true, result.get("value")?.asJsonObject)
+            } else {
+                RpcResult(false, result.get("error")?.asJsonObject)
+            }
+        } catch (t: Throwable) {
+            LOG.warn("dsh api parse failed for $method", t)
+            null
+        }
+    }
+
+    private fun post(port: Int, method: String, body: String): String? {
+        var conn: HttpURLConnection? = null
+        try {
+            val url = URL("http://127.0.0.1:$port/api/$method")
+            conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 2000
+            conn.readTimeout = 4000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                LOG.warn("dsh api $method -> HTTP $code")
+                return null
+            }
+            return conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        } catch (t: Throwable) {
+            LOG.warn("dsh api $method failed", t)
+            return null
+        } finally {
+            try {
+                conn?.disconnect()
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    /** JSON 字符串字面量转义 */
+    private fun jsonString(value: String): String {
+        val sb = StringBuilder("\"")
+        for (ch in value) {
+            when (ch) {
+                '\\' -> sb.append("\\\\")
+                '"' -> sb.append("\\\"")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> if (ch.code < 0x20) sb.append("\\u%04x".format(ch.code)) else sb.append(ch)
+            }
+        }
+        sb.append("\"")
+        return sb.toString()
+    }
+}
