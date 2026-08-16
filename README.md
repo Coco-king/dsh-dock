@@ -73,7 +73,7 @@ DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 
 
 ## 设置
 
-工具窗口右上角齿轮按钮（或 `Settings -> Tools -> Dsh`）可配置：
+工具窗口右上角齿轮按钮（或 `Settings -> Other Settings -> Dsh Dock`）可配置：
 
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
@@ -124,10 +124,11 @@ DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 
 - **WebUI 区域显示空白/加载失败**：确认 `Settings -> Tools -> Web Browsers and Preview` 中
   JCEF 已启用（或注册表键 `ide.browser.jcef.enabled` 为 true）；插件内置回退面板可直接用系统浏览器打开，
   且 JCEF 不可用时 WebUI 就绪后会自动改用系统浏览器打开
-- **提示找不到 dsh/node 命令**：WSL 模式以登录+交互 shell 启动（与终端环境一致），
-  若仍找不到，确认 WSL 终端里 `node -v` / `dsh --version` 能正常执行
-  （nvm 安装的需要 `nvm use default` 或设置了 alias）；
-  Windows 模式确认 dsh 已加入 Windows PATH（`npm i -g @deepseek-ai/dsh` 后重开终端生效）
+- **提示找不到 dsh/node 命令**：启动时若检测不到 dsh（未安装 `@deepseek-ai/dsh`），插件会
+  快速失败并弹出「Dsh 启动失败」通知，提示安装命令 `npm i -g @deepseek-ai/dsh`
+  （WSL 模式在 WSL 终端安装、nvm 环境需 `nvm use default`；Windows 模式装完需重开终端刷新 PATH）。
+  若已安装仍提示找不到，WSL 模式请确认 WSL 终端里 `node -v` / `dsh --version` 能正常执行；
+  详细警告见工具窗口底部日志面板
 - **项目根路径在 WSL 中的形态**：Windows 路径 `C:\x` 会被转换为 `/mnt/c/x`；
   通过 `\\wsl$\<distro>\...` 打开的项目会转换为对应的 WSL 路径
 - **右键发送后输入框没有出现引用**：确认 JCEF 内嵌浏览器可用（工具窗口中间显示的是 WebUI 页面）；
