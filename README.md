@@ -1,7 +1,7 @@
-# Dsh - DeepSeek Harness IDEA 插件
+# Dsh Dock - DeepSeek Harness IDEA 插件
 
 <!-- Plugin description -->
-IntelliJ IDEA 插件：在 IDE 右侧工具栏提供黑色的 dsh 鲸鱼图标，一键启动
+Dsh Dock 是一个 IntelliJ IDEA 插件：在 IDE 右侧工具栏提供黑色的 dsh 鲸鱼图标，一键启动
 DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 WebUI。
 支持两种启动方式：在 WSL 中启动，或在 Windows 中直接启动。
 项目空间默认使用当前打开的 IDEA 项目根路径。
@@ -9,13 +9,13 @@ DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 
 
 ## 功能
 
-- **右侧工具栏鲸鱼图标**：安装后在右侧工具栏出现黑色的 dsh 鲸鱼图标，点击即可打开 Dsh 工具窗口
+- **右侧工具栏鲸鱼图标**：安装后在右侧工具栏出现黑色的 dsh 鲸鱼图标，点击即可打开 Dsh Dock 工具窗口
 - **双启动方式（设置可选）**：
   - **WSL 中启动**：通过 `wsl.exe` 在 WSL 里运行 dsh（参考 `ldsh.cmd` 的启动思路），
     自动加载 WSL 用户的 `~/.bashrc`，因此 nvm/PATH 安装的 dsh 都能直接用，不绑定任何本机路径
   - **Windows 直接启动**：直接在 Windows 上隐藏后台运行 `dsh web`（要求 dsh 已加入 Windows PATH）
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
-- **右键发送代码/文件到 Dsh**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
+- **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
   `@路径` 引用直接发送到 Dsh 输入框（自动打开工具窗口、必要时自动启动 dsh）：
   - 选中代码 → `@<path>#L<start>-<end>`（如 `@/mnt/c/.../.gitignore#L5-6`）
   - 选中文件 → `@<path>`（如 `@/mnt/c/.../gradlew`）
@@ -32,18 +32,18 @@ DeepSeek Harness (`dsh web`)，并在内置的侧边栏浏览器窗口中打开 
 
 1. 使用 IDEA 打开本项目，等待 Gradle 同步完成
 2. 运行 `Run Plugin`（`gradlew runIde`），会启动一个带插件的测试 IDE 实例（IC 2024.2.5）
-3. 在测试 IDE 右侧工具栏点击黑色的鲸鱼图标，打开 Dsh 工具窗口
+3. 在测试 IDE 右侧工具栏点击黑色的鲸鱼图标，打开 Dsh Dock 工具窗口
 4. 首次打开会自动启动 dsh，并加载 `http://localhost:3090/`
 5. 如端口 3090 已有 dsh 在运行，插件会直接加载 WebUI，而不会重复启动
 
 ### 右键发送代码/文件
 
-- 在编辑器里**选中一段代码**，右键 → **发送选中代码到 Dsh**：
+- 在编辑器里**选中一段代码**，右键 → **发送选中代码到 Dsh Dock**：
   会在 Dsh 输入框追加 `@<文件路径>#L<起>-<止>`（行号从 1 开始、含端点），
   例如选中 `.gitignore` 的第 5-6 行 → `@C:/Workspace/.../.gitignore#L5-6`（Windows 模式）
-- 在项目视图中**选中文件/目录**，右键 → **发送文件路径到 Dsh**：
+- 在项目视图中**选中文件/目录**，右键 → **发送文件路径到 Dsh Dock**：
   会在 Dsh 输入框追加 `@<路径>`，例如 `@C:/Workspace/.../gradlew`
-- 发送时若 Dsh 工具窗口未打开会自动打开；若 dsh 尚未启动会自动启动；输入框会聚焦并追加引用
+- 发送时若 Dsh Dock 工具窗口未打开会自动打开；若 dsh 尚未启动会自动启动；输入框会聚焦并追加引用
   （每次发送都会追加，可对同一段代码多次发送）；发送的是引用文本，
   按 Enter 后模型会在需要时用 read 工具读取对应文件
 
