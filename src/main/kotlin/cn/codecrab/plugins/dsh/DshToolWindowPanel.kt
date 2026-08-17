@@ -89,6 +89,18 @@ class DshToolWindowPanel(
     private var syncSessionIds: List<String>? = null
 
     /**
+     * 本次工作空间同步是否失败。dsh API 偶尔在端口就绪后仍有一小段未就绪窗口,
+     * 同步失败时页面仍会加载, 但工作空间不会切到当前项目 (手动刷新可恢复)。
+     * 置位后, 页面加载完成 (onLoadEnd) 时自动刷新一次重试同步。
+     */
+    @Volatile
+    private var workspaceSyncFailed: Boolean = false
+
+    /** 当前失败周期是否已自动刷新过 (每个失败周期最多一次, 避免无限循环) */
+    @Volatile
+    private var syncAutoReloaded: Boolean = false
+
+    /**
      * 本面板是否发起过尚未完成的启动尝试。
      * 状态变化现在会广播到所有窗口的面板, 启动失败通知只在"发起启动的那个面板"弹出,
      * 因此该标志只能由本面板自己的启动调用置位, 不能在 STARTING 回调里统一置位。
@@ -254,6 +266,8 @@ class DshToolWindowPanel(
             if (frame.isMain) {
                 pageLoaded = true
                 flushPendingReference()
+                // 工作空间同步失败时, 页面加载完成后自动刷新一次重试 (与手动刷新等效)
+                autoReloadAfterSyncFailure()
             }
         }
     }
@@ -480,8 +494,12 @@ class DshToolWindowPanel(
                 appendLog("工作空间已就绪: ${dshPath ?: projectPath}")
                 // 记录当前项目的 sessionIds, 供 onLoadStart 清除不属于本项目的持久化会话选择
                 syncSessionIds = result.sessionIds
+                workspaceSyncFailed = false
+                syncAutoReloaded = false
             } else {
                 appendLog("工作空间同步不可用(不影响使用), 如需切换请在 WebUI 侧边栏手动选择")
+                // 页面加载完成后自动刷新一次重试 (见 [autoReloadAfterSyncFailure])
+                workspaceSyncFailed = true
             }
             SwingUtilities.invokeLater {
                 if (project.isDisposed) return@invokeLater
@@ -489,6 +507,29 @@ class DshToolWindowPanel(
                 browser?.loadURL(url)
             }
         }, "dsh-plugin-workspace-ensure").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * 工作空间同步偶尔会因 dsh API 尚未完全就绪而失败 (页面本身能正常加载,
+     * 但工作空间没有切到当前项目, 用户手动刷新即可恢复)。
+     * 这里在页面加载完成后自动刷新一次重新同步 —— 与手动刷新等效;
+     * 每个失败周期最多自动刷新一次 (由 [syncAutoReloaded] 保证), 避免循环。
+     */
+    private fun autoReloadAfterSyncFailure() {
+        if (!workspaceSyncFailed || syncAutoReloaded) return
+        syncAutoReloaded = true
+        workspaceSyncFailed = false
+        SwingUtilities.invokeLater {
+            if (project.isDisposed) return@invokeLater
+            val timer = javax.swing.Timer(1200, null)
+            timer.addActionListener {
+                if (project.isDisposed) return@addActionListener
+                appendLog("工作空间同步未成功, 自动刷新页面重试...")
+                loadWebUi()
+            }
+            timer.isRepeats = false
+            timer.start()
+        }
     }
 
     /**
