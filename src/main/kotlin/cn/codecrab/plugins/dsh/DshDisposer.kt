@@ -6,7 +6,7 @@ import java.lang.reflect.Method
 /**
  * 跨版本注册 Disposable 的桥接:
  * 2024.1 起 `Disposer` 从 `com.intellij.util.Disposer` 迁移到 `com.intellij.openapi.util.Disposer`,
- * 旧包名在 2024.2 已被删除。为了兼容 IntelliJ 2022.1 (221) ~ 2025.2 (252.*),
+ * 旧包名在 2024.2 已被删除。为了兼容 IntelliJ 2022.3 (223) 起的新旧平台版本,
  * 这里按 新包名 -> 旧包名 的顺序反射查找 `register(Disposable, Disposable)`。
  */
 object DshDisposer {

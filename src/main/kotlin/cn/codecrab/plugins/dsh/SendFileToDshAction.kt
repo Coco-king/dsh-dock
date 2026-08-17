@@ -1,5 +1,6 @@
 package cn.codecrab.plugins.dsh
 
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -12,6 +13,9 @@ import com.intellij.openapi.project.DumbAware
  * 或 `@C:/Workspace/.../gradlew` (Windows 模式)。
  */
 class SendFileToDshAction : AnAction(), DumbAware {
+
+    /** update() 只读取 VFS / 项目数据 (VIRTUAL_FILE), 不碰 Swing 组件, 声明 BGT */
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun update(e: AnActionEvent) {
         val file = e.getData(CommonDataKeys.VIRTUAL_FILE)

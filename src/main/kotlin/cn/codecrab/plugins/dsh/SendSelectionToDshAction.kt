@@ -1,5 +1,6 @@
 package cn.codecrab.plugins.dsh
 
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -15,9 +16,17 @@ import com.intellij.openapi.project.DumbAware
  */
 class SendSelectionToDshAction : AnAction(), DumbAware {
 
+    /**
+     * update() 依赖 Editor / 选区 (EDT 数据), 声明 EDT。
+     * 注意: EDT action 的 update() 不能通过 DataContext 读取 VIRTUAL_FILE,
+     * 会被 PreCachedDataContext 报告 "'virtualFile' is requested on EDT",
+     * 因此文件存在性改用文档映射查询 (轻量缓存查询, 不经数据上下文)。
+     */
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+
     override fun update(e: AnActionEvent) {
         val editor = e.getData(CommonDataKeys.EDITOR)
-        val file = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        val file = editor?.let { FileDocumentManager.getInstance().getFile(it.document) }
         val selection = editor?.selectionModel
         e.presentation.isEnabledAndVisible = e.project != null &&
             editor != null && file != null &&

@@ -150,7 +150,7 @@ object DshWorkspaceApi {
         }
         val text = post(port, method, body) ?: return null
         return try {
-            // 静态 parseString (Gson 2.8.6+ 提供, 2022.1 起的 IDE 均满足);
+            // 静态 parseString (Gson 2.8.6+ 提供, 2022.3 起的 IDE 均满足);
             // 实例构造器 JsonParser() / parse(String) 已废弃, 不再使用
             val root = JsonParser.parseString(text).asJsonObject
             val result = root.getAsJsonObject("result")
