@@ -321,22 +321,27 @@ object DshServer {
         val content = buildString {
             appendLine("@echo off")
             appendLine("setlocal")
+            // 统一子进程输出编码为 UTF-8: 不加此行时 cmd.exe 自身消息 (含本地化错误)
+            // 按系统 OEM 代码页 (如中文系统 GBK) 输出, 插件按 UTF-8 读取即乱码
+            appendLine("chcp 65001 >nul 2>&1")
             if (projectPath != null && File(projectPath).isDirectory) {
                 appendLine("cd /d \"$projectPath\"")
             }
-            appendLine("where npx >nul 2>&1")
-            appendLine("if errorlevel 1 (")
-            // 注意: 该通道走 cmd.exe + 系统 OEM 代码页, 必须使用 ASCII, 中文会乱码
-            appendLine("  echo [dsh] ERROR: no Node.js environment (node / npm / npx not found), cannot start dsh web")
-            appendLine("  echo [dsh] install Node.js first: https://nodejs.org/  then reopen terminal")
-            appendLine("  exit /b 1")
-            appendLine(")")
+            // 注意: 用 goto 结构而非括号块, echo 消息里也不含圆括号 ——
+            // cmd 解析括号块时会把消息里的 ')' 当作块结束, 导致 "xxx was unexpected" 解析错误
+            // 检查顺序: 先 dsh (有全局 dsh 就不需要 npx), 再 npx (官方命令兼容), 两者皆无才报错
             appendLine("where dsh >nul 2>&1")
-            appendLine("if errorlevel 1 (")
-            appendLine("  echo [dsh] no global dsh found, using official command: npx @deepseek-ai/dsh web (auto-download on first run)")
-            appendLine("  npx --yes @deepseek-ai/dsh web --port $port${if (extra.isNotEmpty()) " $extra" else ""}")
-            appendLine("  exit /b %ERRORLEVEL%")
-            appendLine(")")
+            appendLine("if not errorlevel 1 goto :dsh_ok")
+            appendLine("where npx >nul 2>&1")
+            appendLine("if not errorlevel 1 goto :npx_ok")
+            appendLine("echo [dsh] ERROR: dsh not found and no Node.js environment - node, npm and npx not found, cannot start dsh web")
+            appendLine("echo [dsh] install Node.js first: https://nodejs.org/  then run: npm i -g @deepseek-ai/dsh")
+            appendLine("exit /b 1")
+            appendLine(":npx_ok")
+            appendLine("echo [dsh] no global dsh found, using official command: npx @deepseek-ai/dsh web - auto-download on first run")
+            appendLine("npx --yes @deepseek-ai/dsh web --port $port${if (extra.isNotEmpty()) " $extra" else ""}")
+            appendLine("exit /b %ERRORLEVEL%")
+            appendLine(":dsh_ok")
             if (extra.isNotEmpty()) {
                 appendLine("dsh web --port $port $extra")
             } else {
@@ -356,7 +361,8 @@ object DshServer {
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
             "-WindowStyle", "Hidden",
-            "-Command", "& '${cmdFile.absolutePath}'",
+            // 同样把 PowerShell 自身的输出 (如本地化错误消息) 统一为 UTF-8, 避免乱码
+            "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & '${cmdFile.absolutePath}'",
         )
         onLog("启动命令: powershell.exe -WindowStyle Hidden -> ${cmdFile.name}")
         val p = ProcessBuilder(launchCmd).start()
