@@ -68,7 +68,7 @@ Right-click actions can send code or file references (e.g. `@path#L5-6`) straigh
 
 ```bash
 ./gradlew buildPlugin
-# 产物: build/distributions/dsh-idea-plugin-1.0.0.zip
+# 产物: build/distributions/dsh-idea-plugin-1.0.1.zip
 # 通过 IDEA: Settings -> Plugins -> Install Plugin from Disk... 安装
 ```
 
