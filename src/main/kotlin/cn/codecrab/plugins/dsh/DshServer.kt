@@ -326,13 +326,14 @@ object DshServer {
             }
             appendLine("where npx >nul 2>&1")
             appendLine("if errorlevel 1 (")
-            appendLine("  echo [dsh] ERROR: 未检测到 Node.js 环境 (找不到 npx / npm), 无法启动 dsh web")
-            appendLine("  echo [dsh] 请先安装 Node.js: https://nodejs.org/  安装后重新打开终端")
+            // 注意: 该通道走 cmd.exe + 系统 OEM 代码页, 必须使用 ASCII, 中文会乱码
+            appendLine("  echo [dsh] ERROR: no Node.js environment (node / npm / npx not found), cannot start dsh web")
+            appendLine("  echo [dsh] install Node.js first: https://nodejs.org/  then reopen terminal")
             appendLine("  exit /b 1")
             appendLine(")")
             appendLine("where dsh >nul 2>&1")
             appendLine("if errorlevel 1 (")
-            appendLine("  echo [dsh] 未检测到全局 dsh, 使用官方启动命令: npx @deepseek-ai/dsh web (首次运行会自动下载)")
+            appendLine("  echo [dsh] no global dsh found, using official command: npx @deepseek-ai/dsh web (auto-download on first run)")
             appendLine("  npx --yes @deepseek-ai/dsh web --port $port${if (extra.isNotEmpty()) " $extra" else ""}")
             appendLine("  exit /b %ERRORLEVEL%")
             appendLine(")")

@@ -672,11 +672,12 @@ class DshToolWindowPanel(
 
     private fun appendLog(line: String) {
         // 日志里出现"找不到 dsh"警告 -> 标记, 启动失败通知里给出对应提示
-        if (line.contains("找不到 dsh")) {
+        // (Windows .cmd 通道消息为 ASCII, 同时匹配中英文两种标记)
+        if (line.contains("找不到 dsh") || line.contains("dsh not found")) {
             dshMissingWarned = true
         }
         // 日志里出现"未检测到 Node.js 环境" -> 标记, 通知里提示安装 Node.js
-        if (line.contains("未检测到 Node.js")) {
+        if (line.contains("未检测到 Node.js") || line.contains("no Node.js environment")) {
             nodeEnvMissingWarned = true
         }
         // 出现 WSL 子系统错误标识 (如 Wsl/Service/E_UNEXPECTED) -> 标记, 通知里给 WSL 修复建议
