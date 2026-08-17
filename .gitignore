@@ -1,7 +1,50 @@
-.gradle
-.idea
-.intellijPlatform
-.qodana
-build
-.kotlin
-.work
+# ========================
+# Gradle
+# ========================
+.gradle/
+build/
+*.class
+*.jar
+*.war
+
+# ========================
+# IntelliJ IDEA / Kotlin
+# ========================
+.idea/
+.intellijPlatform/
+.kotlin/
+*.iml
+*.iws
+*.ipr
+out/
+
+# ========================
+# Qodana / CI
+# ========================
+.qodana/
+.work/
+
+# ========================
+# IDE Run Configurations (个人配置，不应提交)
+# ========================
+.run/
+
+# ========================
+# OS / Editor
+# ========================
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ========================
+# Local properties (如有)
+# ========================
+local.properties
+
+# ========================
+# Logs
+# ========================
+*.log
+logs/
