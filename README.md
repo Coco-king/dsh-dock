@@ -14,7 +14,8 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 - **双启动方式（设置可选）**：
   - **WSL 中启动**：通过 `wsl.exe` 在 WSL 里运行 dsh（参考 `ldsh.cmd` 的启动思路），
     自动加载 WSL 用户的 `~/.bashrc`，因此 nvm/PATH 安装的 dsh 都能直接用，不绑定任何本机路径
-  - **Windows 直接启动**：直接在 Windows 上隐藏后台运行 `dsh web`（要求 dsh 已加入 Windows PATH）
+  - **Windows 直接启动**：直接在 Windows 上隐藏后台运行 `dsh web`（未全局安装时自动改用
+    `npx @deepseek-ai/dsh web` 启动）
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
 - **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
   `@路径` 引用直接发送到 Dsh 输入框（自动打开工具窗口、必要时自动启动 dsh）：
@@ -34,8 +35,10 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 1. 使用 IDEA 打开本项目，等待 Gradle 同步完成
 2. 运行 `Run Plugin`（`gradlew runIde`），会启动一个带插件的测试 IDE 实例（IC 2024.2.5）
 3. 在测试 IDE 右侧工具栏点击黑色的鲸鱼图标，打开 Dsh Dock 工具窗口
-4. 首次打开会自动启动 dsh，并加载 `http://localhost:3090/`
-5. 如端口 3090 已有 dsh 在运行，插件会直接加载 WebUI，而不会重复启动
+4. 首次打开会自动启动 dsh，并加载 `http://localhost:3080/`
+5. 如端口 3080 已有 dsh 在运行，插件会直接加载 WebUI，而不会重复启动
+6. 未全局安装 dsh 也没关系：插件会自动使用官方启动命令 `npx @deepseek-ai/dsh web`（首次运行会自动下载），
+   不需要手动执行 `npm i -g @deepseek-ai/dsh`
 
 ### 右键发送代码/文件
 
@@ -78,8 +81,8 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
-| 启动方式 | `在 WSL 中启动`（Windows+WSL）或 `在 Windows 中直接启动`（dsh 需在 Windows PATH 中） | WSL |
-| 端口 | dsh web 监听端口 | `3090` |
+| 启动方式 | `在 Windows 中直接启动`（默认）或 `在 WSL 中启动`（Windows+WSL） | Windows |
+| 端口 | dsh web 监听端口 | `3080` |
 | 自动启动 | 打开工具窗口时自动启动 dsh | 开启 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
@@ -125,11 +128,13 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 - **WebUI 区域显示空白/加载失败**：确认 `Settings -> Tools -> Web Browsers and Preview` 中
   JCEF 已启用（或注册表键 `ide.browser.jcef.enabled` 为 true）；插件内置回退面板可直接用系统浏览器打开，
   且 JCEF 不可用时 WebUI 就绪后会自动改用系统浏览器打开
-- **提示找不到 dsh/node 命令**：启动时若检测不到 dsh（未安装 `@deepseek-ai/dsh`），插件会
-  快速失败并弹出「Dsh 启动失败」通知，提示安装命令 `npm i -g @deepseek-ai/dsh`
-  （WSL 模式在 WSL 终端安装、nvm 环境需 `nvm use default`；Windows 模式装完需重开终端刷新 PATH）。
-  若已安装仍提示找不到，WSL 模式请确认 WSL 终端里 `node -v` / `dsh --version` 能正常执行；
-  详细警告见工具窗口底部日志面板
+- **提示找不到 dsh / Node.js**：未全局安装 dsh 时，插件会自动改用官方启动命令
+  `npx @deepseek-ai/dsh web`（首次运行自动下载），一般无需手动安装。仅当机器上**完全没有 Node.js 环境**
+  （node / npm / npx 均不可用）时才会启动失败并提示：
+  - Windows 模式：安装 [Node.js](https://nodejs.org/) 后重新打开终端，再点击「启动」
+  - WSL 模式：在 WSL 中安装 Node.js（建议 [nvm](https://github.com/nvm-sh/nvm)），再点击「启动」
+  - 若已安装仍提示找不到，WSL 模式请确认 WSL 终端里 `node -v` / `npx --version` 能正常执行；
+    详细日志见工具窗口底部日志面板
 - **项目根路径在 WSL 中的形态**：Windows 路径 `C:\x` 会被转换为 `/mnt/c/x`；
   通过 `\\wsl$\<distro>\...` 打开的项目会转换为对应的 WSL 路径
 - **右键发送后输入框没有出现引用**：确认 JCEF 内嵌浏览器可用（工具窗口中间显示的是 WebUI 页面）；
