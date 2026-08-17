@@ -108,9 +108,10 @@ object DshServer {
      */
     fun start(projectPath: String?, onLog: (String) -> Unit): Boolean {
         val settings = DshSettingsState.getInstance()
-        val port = settings.port
+        // 端口/附加参数按当前选中的启动方式 (WSL / Windows) 分别配置
+        val port = settings.currentPort()
         if (port !in 1..65535) {
-            onLog("端口配置无效: $port (应为 1-65535), 请检查设置")
+            onLog("端口配置无效: $port (应为 1-65535), 请检查设置 (${settings.launchMode} 模式)")
             return false
         }
         synchronized(lock) {
@@ -125,7 +126,7 @@ object DshServer {
             }
             setState(State.STARTING)
             try {
-                launch(projectPath, port, settings, onLog)
+                launch(projectPath, settings.launchMode, port, settings.currentExtraArgs().trim(), onLog)
             } catch (t: Throwable) {
                 LOG.warn("launch dsh failed", t)
                 onLog("启动失败: ${t.message}")
@@ -137,20 +138,20 @@ object DshServer {
 
     private fun launch(
         projectPath: String?,
+        mode: String,
         port: Int,
-        settings: DshSettingsState,
+        extraArgs: String,
         onLog: (String) -> Unit,
     ) {
-        val mode = settings.launchMode
         when (mode) {
-            "windows" -> launchOnWindows(projectPath, port, settings, onLog)
+            "windows" -> launchOnWindows(projectPath, port, extraArgs, onLog)
             else -> {
                 if (!WslSupport.isWindows) {
                     onLog("WSL 模式仅在 Windows + WSL 环境下可用, 请到设置中改用「Windows 直接启动」")
                     setState(State.IDLE)
                     return
                 }
-                launchOnWsl(projectPath, port, settings, onLog)
+                launchOnWsl(projectPath, port, extraArgs, onLog)
             }
         }
     }
@@ -160,11 +161,10 @@ object DshServer {
     private fun launchOnWsl(
         projectPath: String?,
         port: Int,
-        settings: DshSettingsState,
+        extra: String,
         onLog: (String) -> Unit,
     ) {
         val wslProject = WslSupport.toWslPath(projectPath)
-        val extra = settings.extraDshArgs.trim()
 
         // 1) WSL 侧启动脚本 (通用: 加载用户 ~/.bashrc, nvm 或 PATH 安装的 dsh 均可)
         val shFile = WslSupport.createTempFile("dsh-run-wsl-", ".sh")
@@ -262,10 +262,9 @@ object DshServer {
     private fun launchOnWindows(
         projectPath: String?,
         port: Int,
-        settings: DshSettingsState,
+        extra: String,
         onLog: (String) -> Unit,
     ) {
-        val extra = settings.extraDshArgs.trim()
         if (!WslSupport.isWindows) {
             // macOS/Linux: 直接用 bash 启动
             val shFile = WslSupport.createTempFile("dsh-run-posix-", ".sh")

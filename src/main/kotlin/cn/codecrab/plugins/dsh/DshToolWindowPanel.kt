@@ -157,7 +157,7 @@ class DshToolWindowPanel(
                 return@addActionListener
             }
             if (jcefAvailable && !webUiLoaded) {
-                val port = settings.port
+                val port = settings.currentPort()
                 if (DshServer.state == DshServer.State.RUNNING || WslSupport.isPortOpen(port)) {
                     webUiLoaded = true
                     appendLog("端口 $port 已就绪, 加载 WebUI")
@@ -356,7 +356,7 @@ class DshToolWindowPanel(
         val ref = pendingReference ?: return
         if (!jcefAvailable || !pageLoaded) return
         val b = browser ?: return
-        val expectedPrefix = DshServer.webUrl(settings.port)
+        val expectedPrefix = DshServer.webUrl(settings.currentPort())
         val current = try {
             b.cefBrowser.url
         } catch (_: Throwable) {
@@ -478,7 +478,7 @@ class DshToolWindowPanel(
      * 同步失败不影响使用 (按现状直接加载)。
      */
     private fun loadWebUi() {
-        val port = settings.port
+        val port = settings.currentPort()
         val url = DshServer.webUrl(port)
         val projectPath = project.basePath
         if (projectPath == null) {
@@ -563,13 +563,13 @@ class DshToolWindowPanel(
     }
 
     private fun openInSystemBrowser() {
-        val url = DshServer.webUrl(settings.port)
-        if (WslSupport.isPortOpen(settings.port)) {
+        val url = DshServer.webUrl(settings.currentPort())
+        if (WslSupport.isPortOpen(settings.currentPort())) {
             desktopBrowse(url)
             appendLog("已在系统浏览器打开: $url")
         } else {
-            appendLog("端口 ${settings.port} 未就绪, 请先启动 dsh")
-            Messages.showWarningDialog(project, "dsh 尚未启动, 端口 ${settings.port} 未就绪。\n请先点击「启动」。", "Dsh Dock")
+            appendLog("端口 ${settings.currentPort()} 未就绪, 请先启动 dsh")
+            Messages.showWarningDialog(project, "dsh 尚未启动, 端口 ${settings.currentPort()} 未就绪。\n请先点击「启动」。", "Dsh Dock")
         }
     }
 
@@ -606,7 +606,7 @@ class DshToolWindowPanel(
                     dshMissingWarned = false
                     nodeEnvMissingWarned = false
                     wslErrorSeen = false
-                    statusLabel.text = STR_RUNNING.format(settings.port)
+                    statusLabel.text = STR_RUNNING.format(settings.currentPort())
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
                     if (jcefAvailable) {
                         webUiLoaded = true
@@ -616,7 +616,7 @@ class DshToolWindowPanel(
                     // JCEF 不可用时自动改用系统浏览器打开 WebUI
                     if ((settings.openExternalBrowser || !jcefAvailable) && !externalBrowserOpenedForSession) {
                         externalBrowserOpenedForSession = true
-                        desktopBrowse(DshServer.webUrl(settings.port))
+                        desktopBrowse(DshServer.webUrl(settings.currentPort()))
                         if (!jcefAvailable) {
                             appendLog("JCEF 内嵌浏览器不可用, 已自动改用系统浏览器打开 WebUI")
                         }
@@ -685,7 +685,7 @@ class DshToolWindowPanel(
                     append("仍失败可重启 WSL 服务 (管理员 PowerShell: net stop LxssManager && net start LxssManager)。")
                 }
                 else -> buildString {
-                    append("dsh 启动失败, 端口 ${settings.port} 未就绪。\n")
+                    append("dsh 启动失败, 端口 ${settings.currentPort()} 未就绪。\n")
                     if (settings.launchMode == "wsl") {
                         append("若日志含 WSL 错误 (如 Wsl/Service/E_UNEXPECTED), 请先在 Windows 运行 wsl --shutdown 后重试;\n")
                         append("仍失败可重启 WSL 服务 (管理员 PowerShell: net stop LxssManager && net start LxssManager)。\n")

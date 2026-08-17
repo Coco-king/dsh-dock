@@ -1,12 +1,16 @@
 # Dsh Dock - DeepSeek Harness IDEA 插件
 
 <!-- Plugin description -->
-Dsh Dock is an IntelliJ IDEA plugin that brings the DeepSeek Harness assistant (`dsh web`) into your IDE. One click on the whale icon in the right tool window starts the server and opens its WebUI in a built-in browser panel, so you can chat with DeepSeek models without leaving the IDE. It works with both WSL and native Windows startup, and uses the current project root as the dsh workspace.
+Dsh Dock is an IntelliJ IDEA plugin that brings the DeepSeek Harness assistant (`dsh web`) into your IDE. One click on the whale icon in the right tool window starts the server and opens its WebUI in a built-in browser panel, so you can chat with DeepSeek models without leaving the IDE. It works with both WSL and native Windows startup, and uses the current project root as the dsh workspace. If dsh is already running on the configured port (e.g. started by yourself), it skips launching and opens the WebUI directly in the built-in browser.
 
-Dsh Dock 是一个 IntelliJ IDEA 插件：点击右侧工具栏的鲸鱼图标，一键启动 DeepSeek Harness（`dsh web`），WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话。支持在 WSL 中启动或在 Windows 中直接启动，并以当前打开的项目根目录作为 dsh 工作空间。
+Dsh Dock 是一个 IntelliJ IDEA 插件：点击右侧工具栏的鲸鱼图标，一键启动 DeepSeek Harness（`dsh web`），WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话。支持在 WSL 中启动或在 Windows 中直接启动，并以当前打开的项目根目录作为 dsh 工作空间。如果端口已被监听（比如你自己已启动过 dsh），插件会跳过启动、直接在内置浏览器中打开 WebUI。
 
-Right-click actions send the selected code or file into the Dsh input box as a `@path` reference, so the assistant can read the file when needed. The plugin is compatible with IntelliJ IDEA 2022.3 and later.
+Right-click actions send the selected code or file into the Dsh input box as a `@path` reference, so the assistant can read the file when needed. On Windows, dsh is launched through a hidden PowerShell process — if your security software intercepts it, please allow it. The plugin is compatible with IntelliJ IDEA 2022.3 and later. Open source: <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
+
+## 开源地址
+
+项目开源：<https://gitee.com/kkcoco/dsh-idea-plugin>，欢迎 Star、提交 Issue / PR。
 
 ## 功能
 
@@ -15,8 +19,12 @@ Right-click actions send the selected code or file into the Dsh input box as a `
   - **WSL 中启动**：通过 `wsl.exe` 在 WSL 里运行 dsh（参考 `ldsh.cmd` 的启动思路），
     自动加载 WSL 用户的 `~/.bashrc`，因此 nvm/PATH 安装的 dsh 都能直接用，不绑定任何本机路径
   - **Windows 直接启动**：直接在 Windows 上隐藏后台运行 `dsh web`（未全局安装时自动改用
-    `npx @deepseek-ai/dsh web` 启动）
+    `npx @deepseek-ai/dsh web` 启动）。启动通过**隐藏的 PowerShell** 调用执行，
+    若安全软件（杀毒/防火墙）弹出拦截提示，请选择**允许/放行**，否则可能导致启动失败
+  - 两种启动方式的**端口与附加参数分别配置**（互不影响），切换启动方式无需改回设置
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
+- **已启动自动识别**：如果对应端口已被监听（比如你自己已经启动了 dsh），插件会**跳过启动步骤**，
+  直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停
 - **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
   `@路径` 引用直接发送到 Dsh 输入框（自动打开工具窗口、必要时自动启动 dsh）：
   - 选中代码 → `@<path>#L<start>-<end>`（如 `@/mnt/c/.../.gitignore#L5-6`）
@@ -36,7 +44,7 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 2. 运行 `Run Plugin`（`gradlew runIde`），会启动一个带插件的测试 IDE 实例（IC 2024.2.5）
 3. 在测试 IDE 右侧工具栏点击黑色的鲸鱼图标，打开 Dsh Dock 工具窗口
 4. 首次打开会自动启动 dsh，并加载 `http://localhost:3080/`
-5. 如端口 3080 已有 dsh 在运行，插件会直接加载 WebUI，而不会重复启动
+5. 如果端口 3080 已有 dsh 在运行（包括你自己启动的 dsh 进程），插件会跳过启动、直接加载 WebUI，而不会重复启动
 6. 未全局安装 dsh 也没关系：插件会自动使用官方启动命令 `npx @deepseek-ai/dsh web`（首次运行会自动下载），
    不需要手动执行 `npm i -g @deepseek-ai/dsh`
 
@@ -82,12 +90,17 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
 | 启动方式 | `在 Windows 中直接启动`（默认）或 `在 WSL 中启动`（Windows+WSL） | Windows |
-| 端口 | dsh web 监听端口 | `3080` |
+| WSL 端口 | WSL 模式下 dsh web 监听端口（WSL 与 Windows 可各自使用不同端口） | `3090` |
+| WSL 附加参数 | WSL 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
+| Windows 端口 | Windows 模式下 dsh web 监听端口 | `3080` |
+| Windows 附加参数 | Windows 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 | 自动启动 | 打开工具窗口时自动启动 dsh | 开启 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
 | WebUI 语言 | 单选：跟随 IDE 语言 / 简体中文 / English（JCEF 默认 en-US，跟随模式下按 IDE 语言自动注入中文） | 跟随 |
-| 附加参数 | 追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
+
+> 端口与附加参数按启动方式分别配置，**实际启动时只使用当前选中的启动方式对应的那一组**；
+> 切换到另一种启动方式无需改回端口/参数。
 
 > 兼容旧版本：插件设置是通用化的，WSL 发行版、NVM 路径、ldsh.cmd 等本机细节
 > 一律不配置、不持久化，由用户自己的环境负责，换机器/换 IDE 无需重新配置。
@@ -98,7 +111,7 @@ Right-click actions send the selected code or file into the Dsh input box as a `
   一个生成的 `dsh-run-wsl-*.sh` 脚本（切换项目工作目录、加载 `~/.profile` / `~/.bashrc`，
   并兜底从 `NVM_DIR` 或 `~/.nvm` 加载 nvm），再通过隐藏的 PowerShell 调用，避免弹出控制台窗口
 - **Windows 模式**：生成 `dsh-run-win-*.cmd`（`cd /d` 项目目录 + `dsh web --port <port>`），
-  通过隐藏的 PowerShell 执行
+  通过隐藏的 PowerShell 执行（若安全软件拦截 PowerShell 请放行，否则启动可能失败）
 - dsh 进程的标准输出/错误输出被捕获到工具窗口的日志面板
 - 轮询 `127.0.0.1:<port>` 端口，就绪后由内嵌 JCEF 浏览器加载 WebUI
 - **工作空间跟随项目**：dsh 的"工作空间"是持久化注册表（存于 `~/.dsh/storages`，跨进程重启保留），
@@ -128,6 +141,9 @@ Right-click actions send the selected code or file into the Dsh input box as a `
 - **WebUI 区域显示空白/加载失败**：确认 `Settings -> Tools -> Web Browsers and Preview` 中
   JCEF 已启用（或注册表键 `ide.browser.jcef.enabled` 为 true）；插件内置回退面板可直接用系统浏览器打开，
   且 JCEF 不可用时 WebUI 就绪后会自动改用系统浏览器打开
+- **Windows 模式启动被安全软件拦截**：Windows 模式通过**隐藏的 PowerShell** 执行启动命令，
+  若杀毒软件/防火墙弹出拦截提示，请将 `powershell.exe`（及其生成的 `cmd.exe` / `node` 进程）
+  **加入白名单/放行**（或临时关闭防护后重试）；已被放行仍失败时，请查看工具窗口底部日志面板排查
 - **提示找不到 dsh / Node.js**：未全局安装 dsh 时，插件会自动改用官方启动命令
   `npx @deepseek-ai/dsh web`（首次运行自动下载），一般无需手动安装。仅当机器上**完全没有 Node.js 环境**
   （node / npm / npx 均不可用）时才会启动失败并提示：
