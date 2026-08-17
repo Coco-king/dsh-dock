@@ -92,7 +92,7 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
-            untilBuild = providers.gradleProperty("pluginUntilBuild")
+            // 不设置 untilBuild: 取消版本上限, 插件可安装到所有更新的 IDE 版本
         }
     }
 
