@@ -5,7 +5,7 @@ Dsh Dock is an IntelliJ IDEA plugin that runs the DeepSeek Harness command-line 
 
 Dsh Dock 是一个 IntelliJ IDEA 插件：在 IDE 右侧工具栏提供黑色的 dsh 鲸鱼图标，一键启动 DeepSeek Harness（`dsh web`），并在内置的侧边栏浏览器窗口中打开 WebUI。支持两种启动方式：在 WSL 中启动，或在 Windows 中直接启动。项目空间默认使用当前打开的 IDEA 项目根路径。
 
-Right-click actions can send code or file references (e.g. `@path#L5-6`) straight into the Dsh input box, and the plugin supports IntelliJ IDEA 2022.1 (221) and newer.
+Right-click actions can send code or file references (e.g. `@path#L5-6`) straight into the Dsh input box, and the plugin supports IntelliJ IDEA 2022.3 (223) and newer.
 <!-- Plugin description end -->
 
 ## 功能
@@ -27,7 +27,7 @@ Right-click actions can send code or file references (e.g. `@path#L5-6`) straigh
 - **主题/语言**：WebUI 主题跟随 IDE（暗色 IDE 自动深色）；语言可选跟随 IDE/浏览器、简体中文或 English
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
-- **宽版本支持**：支持 IntelliJ IDEA 2022.1 (221) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE
+- **宽版本支持**：支持 IntelliJ IDEA 2022.3 (223) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE
 
 ## 使用
 

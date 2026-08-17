@@ -9,8 +9,13 @@
 - 多窗口状态同步：同一 IDE 进程内多个项目窗口共用 dsh 时，后打开的工具窗口正确显示「运行中」，
   任意窗口启停 dsh 都会同步刷新所有窗口的状态文字与按钮（此前后打开的窗口显示「未启动」但按钮为「停止」，
   且其他窗口停止 dsh 后状态不会刷新）
-- 取消版本上限：不再设置 until-build，插件可安装到 2022.1 (221) 之后的任意 IDEA 版本
+- 取消版本上限：不再设置 until-build，插件可安装到 2022.3 (223) 之后的任意 IDEA 版本
 - 消除市场上传的废弃 API 警告：Gson 改用静态 JsonParser.parseString，URL 构造改用 URI.toURL()
+- 修复 2024.2+ IDE 上打开新窗口报 OLD_EDT 废弃异常：三个 Action 显式声明更新线程
+  （`getActionUpdateThread()`），最低支持版本相应提高到 2022.3 (223)
+  （`ActionUpdateThread` API 自 2022.3 引入，2022.1/2022.2 已于 2023 年底停止支持）
+- 修复打开新文件后立即右键报 "'virtualFile' is requested on EDT"：编辑器右键菜单的
+  update() 不再通过 DataContext 读取 VIRTUAL_FILE，改为文档映射查询（保持 EDT 声明）
 
 ## [1.0.0] - 2026-08-16
 
