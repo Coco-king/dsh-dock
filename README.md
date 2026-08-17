@@ -1,20 +1,6 @@
 # Dsh Dock - DeepSeek Harness IDEA 插件
 
 <!-- Plugin description -->
-**中文**
-
-1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
-   WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
-2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
-   两种方式的端口与附加参数可分别配置
-3. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间
-4. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
-   直接在内置浏览器中打开 WebUI，不会重复启动进程
-5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
-6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-7. **兼容版本**：兼容 IntelliJ IDEA 2022.3 及之后的所有版本
-8. **项目开源**：<https://gitee.com/kkcoco/dsh-idea-plugin>
-
 **English**
 
 1. **One-click start of dsh**: Click the whale icon in the right tool window bar to open the Dsh Dock
@@ -32,6 +18,20 @@
    software intercepts it, please allow it
 7. **Compatibility**: Compatible with IntelliJ IDEA 2022.3 and later
 8. **Open source**: <https://gitee.com/kkcoco/dsh-idea-plugin>
+
+**中文**
+
+1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
+   WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
+2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
+   两种方式的端口与附加参数可分别配置
+3. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间
+4. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
+   直接在内置浏览器中打开 WebUI，不会重复启动进程
+5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
+6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+7. **兼容版本**：兼容 IntelliJ IDEA 2022.3 及之后的所有版本
+8. **项目开源**：<https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址

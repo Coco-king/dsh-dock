@@ -65,7 +65,8 @@ Dsh Dock 是一个 IntelliJ IDEA 插件：一键启动 DeepSeek Harness（`dsh w
 
 `<!-- Plugin description -->` 与 `<!-- Plugin description end -->` 之间的内容会被提取为插件清单描述（markdown → HTML），**不要删除这两个标记**。
 
-- 结构：`**中文**` 组 + `**English**` 组，每组内**按功能拆分为带序号的列表**（`1.` `2.` `3.` …），不要写成长段落；
+- 结构：`**English**` 组在前 + `**中文**` 组在后，每组内**按功能拆分为带序号的列表**（`1.` `2.` `3.` …），不要写成长段落；
+- **必须英文在前**：JetBrains Marketplace 校验要求插件描述**以拉丁字符开头**（否则上传报 `Invalid plugin descriptor 'description'... must start with Latin characters`），描述块若以中文开头会导致上传失败；
 - 中英文条目**一一对应**（相同的序号、相同的功能点），改翻译必须两边同步；
 - 新增/删改功能时保持编号列表与正文（## 功能 / 使用 / 设置 / 原理 / 常见问题）一致。
 
