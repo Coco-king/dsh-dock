@@ -4,7 +4,6 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.diagnostic.Logger
 import java.net.HttpURLConnection
-import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.time.Instant
 import java.util.UUID
@@ -151,8 +150,9 @@ object DshWorkspaceApi {
         }
         val text = post(port, method, body) ?: return null
         return try {
-            // 用实例 parse(String) (Gson 2.8 与 2.10+ 都有; 静态 parseString 仅 2.10+)
-            val root = JsonParser().parse(text).asJsonObject
+            // 静态 parseString (Gson 2.8.6+ 提供, 2022.1 起的 IDE 均满足);
+            // 实例构造器 JsonParser() / parse(String) 已废弃, 不再使用
+            val root = JsonParser.parseString(text).asJsonObject
             val result = root.getAsJsonObject("result")
             if (result.get("ok").asBoolean) {
                 RpcResult(true, result.get("value")?.asJsonObject)
@@ -168,7 +168,8 @@ object DshWorkspaceApi {
     private fun post(port: Int, method: String, body: String): String? {
         var conn: HttpURLConnection? = null
         try {
-            val url = URL("http://127.0.0.1:$port/api/$method")
+            // URL(String) 构造器已废弃 (Java 20+), 改用 URI.toURL()
+            val url = java.net.URI("http://127.0.0.1:$port/api/$method").toURL()
             conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.connectTimeout = 2000
