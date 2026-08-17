@@ -5,3 +5,8 @@
 build
 .kotlin
 .work
+
+# Agent / AI 智能体本机个性化配置（不入库）
+AGENTS.local.md
+AGENTS.local
+.agents.local.md
