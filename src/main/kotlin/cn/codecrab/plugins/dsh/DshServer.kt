@@ -197,23 +197,50 @@ object DshServer {
             appendLine("    nvm use default >/dev/null 2>&1 || true")
             appendLine("  fi")
             appendLine("fi")
-            appendLine("if ! command -v dsh >/dev/null 2>&1; then")
-            appendLine("  echo \"[dsh] WARNING: 在 WSL 中找不到 dsh 命令, 请先安装 @deepseek-ai/dsh\"")
+            // 环境检测: 无 Node.js 环境 (node/npm/npx 均不可用) 时直接失败, 不启动
+            // (脚本立即退出 -> 端口不会就绪 -> 插件不会加载内置浏览器, 并弹出安装提示)
+            appendLine("if ! command -v node >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then")
+            appendLine("  echo \"[dsh] ERROR: 未检测到 Node.js 环境 (node / npm / npx 均不可用), 无法启动 dsh web\"")
+            appendLine("  echo \"[dsh] 请先在 WSL 安装 Node.js (建议使用 nvm): curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash\"")
+            appendLine("  exit 1")
+            appendLine("fi")
+            // 优先使用全局安装的 dsh; 未安装时兼容官方启动命令 npx @deepseek-ai/dsh web (首次运行自动下载)
+            appendLine("if command -v dsh >/dev/null 2>&1; then")
+            appendLine("  DSH_RUN=(dsh)")
+            appendLine("  echo \"[dsh] 使用全局安装的 dsh: \$(command -v dsh)\"")
+            appendLine("elif command -v npx >/dev/null 2>&1; then")
+            appendLine("  DSH_RUN=(npx --yes @deepseek-ai/dsh)")
+            appendLine("  echo \"[dsh] 未检测到全局 dsh, 使用官方启动命令: npx @deepseek-ai/dsh web (首次运行会自动下载)\"")
+            appendLine("else")
+            appendLine("  echo \"[dsh] ERROR: 找不到 dsh 命令且没有 npx 可用, 请先安装 @deepseek-ai/dsh\"")
             appendLine("  echo \"[dsh] 安装命令: npm i -g @deepseek-ai/dsh   (nvm 环境: nvm use default && npm i -g @deepseek-ai/dsh)\"")
             appendLine("  exit 1")
             appendLine("fi")
             appendLine("echo \"[dsh] starting dsh web  (project: ${wslProject ?: "\$HOME"}, port: $port)\"")
-            // 后台运行并记录 PID (不再 exec): 父 bash 保持存活, 退出清理按 PID 精确停止
-            if (extra.isNotEmpty()) {
-                appendLine("dsh web --port $port $extra &")
-            } else {
-                appendLine("dsh web --port $port &")
-            }
-            appendLine("DPID=\$!")
-            appendLine("echo \"\$DPID\" > ${WslSupport.shellSingleQuote(pidFileWsl!!)}")
-            appendLine("wait \$DPID")
-            appendLine("RC=\$?")
-            appendLine("rm -f ${WslSupport.shellSingleQuote(pidFileWsl!!)} 2>/dev/null || true")
+            // 后台运行并记录 PID: 全局 dsh 记录真实 PID 精确停止; npx 模式用 setsid 独立会话,
+            // PID 文件写入 "-<pid>" 表示按进程组停止 (npx 内部还会派生 node/dsh 子进程)
+            val launchArgs = if (extra.isNotEmpty()) "web --port $port $extra" else "web --port $port"
+            val launchCmd = "\"\${DSH_RUN[@]}\" $launchArgs &"
+            val setsidCmd = "setsid bash -c 'echo \"-\"\$\$ > ${WslSupport.shellSingleQuote(pidFileWsl!!)}; exec npx --yes @deepseek-ai/dsh $launchArgs' &"
+            appendLine("if [ \"\${DSH_RUN[0]}\" = \"dsh\" ]; then")
+            appendLine("  $launchCmd")
+            appendLine("  DPID=\$!")
+            appendLine("  echo \"\$DPID\" > ${WslSupport.shellSingleQuote(pidFileWsl!!)}")
+            appendLine("  wait \$DPID")
+            appendLine("  RC=\$?")
+            appendLine("  rm -f ${WslSupport.shellSingleQuote(pidFileWsl!!)} 2>/dev/null || true")
+            appendLine("else")
+            appendLine("  if command -v setsid >/dev/null 2>&1; then")
+            appendLine("    $setsidCmd")
+            appendLine("    wait")
+            appendLine("  else")
+            appendLine("    $launchCmd")
+            appendLine("    DPID=\$!")
+            appendLine("    echo \"\$DPID\" > ${WslSupport.shellSingleQuote(pidFileWsl!!)}")
+            appendLine("    wait \$DPID")
+            appendLine("  fi")
+            appendLine("  RC=\$?")
+            appendLine("fi")
             appendLine("exit \$RC")
         }
         WslSupport.writeTextFile(shFile, shContent)
@@ -246,21 +273,42 @@ object DshServer {
             val content = buildString {
                 appendLine("#!/usr/bin/env bash")
                 if (cwd != null) appendLine("cd ${WslSupport.shellSingleQuote(cwd)} 2>/dev/null || exit 1")
-                appendLine("if ! command -v dsh >/dev/null 2>&1; then")
-                appendLine("  echo \"[dsh] WARNING: 在 PATH 中找不到 dsh 命令, 请先安装 @deepseek-ai/dsh\"")
+                // 环境检测: 无 Node.js 环境时直接失败, 由插件提示安装
+                appendLine("if ! command -v node >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then")
+                appendLine("  echo \"[dsh] ERROR: 未检测到 Node.js 环境 (node / npm / npx 均不可用), 无法启动 dsh web\"")
+                appendLine("  echo \"[dsh] 请先安装 Node.js: https://nodejs.org/\"")
+                appendLine("  exit 1")
+                appendLine("fi")
+                // 优先全局 dsh; 未安装时兼容官方启动命令 npx @deepseek-ai/dsh web
+                appendLine("if command -v dsh >/dev/null 2>&1; then")
+                if (extra.isNotEmpty()) appendLine("  exec dsh web --port $port $extra") else appendLine("  exec dsh web --port $port")
+                appendLine("elif command -v npx >/dev/null 2>&1; then")
+                appendLine("  echo \"[dsh] 未检测到全局 dsh, 使用官方启动命令: npx @deepseek-ai/dsh web (首次运行会自动下载)\"")
+                if (extra.isNotEmpty()) {
+                    appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port $extra")
+                } else {
+                    appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port")
+                }
+                appendLine("else")
+                appendLine("  echo \"[dsh] ERROR: 找不到 dsh 命令且没有 npx 可用, 请先安装 @deepseek-ai/dsh\"")
                 appendLine("  echo \"[dsh] 安装命令: npm i -g @deepseek-ai/dsh\"")
                 appendLine("  exit 1")
                 appendLine("fi")
-                if (extra.isNotEmpty()) appendLine("exec dsh web --port $port $extra") else appendLine("exec dsh web --port $port")
             }
             WslSupport.writeTextFile(shFile, content)
             val p = ProcessBuilder("bash", shFile.absolutePath).start()
             process = p
-            // 非 Windows: 直接 kill 该进程 (exec 后 pid 即 dsh)
+            // 非 Windows: exec 后该进程即 dsh (或 npx)。npx 会派生 node/dsh 子进程,
+            // 停止时先杀子进程再杀自身 (pid 可能是 npx, 直接 kill 会遗留 node)
             val stopSh = WslSupport.createTempFile("dsh-stop-", ".sh")
             WslSupport.writeTextFile(
                 stopSh,
-                "kill ${p.pid()} 2>/dev/null || true\nsleep 1\nkill -9 ${p.pid()} 2>/dev/null || true\n"
+                "pkill -P ${p.pid()} 2>/dev/null || true\n" +
+                    "sleep 1\n" +
+                    "kill ${p.pid()} 2>/dev/null || true\n" +
+                    "sleep 1\n" +
+                    "pkill -9 -P ${p.pid()} 2>/dev/null || true\n" +
+                    "kill -9 ${p.pid()} 2>/dev/null || true\n"
             )
             stopCmdPath = stopSh.absolutePath
             drain(p, onLog)
@@ -276,11 +324,17 @@ object DshServer {
             if (projectPath != null && File(projectPath).isDirectory) {
                 appendLine("cd /d \"$projectPath\"")
             }
+            appendLine("where npx >nul 2>&1")
+            appendLine("if errorlevel 1 (")
+            appendLine("  echo [dsh] ERROR: 未检测到 Node.js 环境 (找不到 npx / npm), 无法启动 dsh web")
+            appendLine("  echo [dsh] 请先安装 Node.js: https://nodejs.org/  安装后重新打开终端")
+            appendLine("  exit /b 1")
+            appendLine(")")
             appendLine("where dsh >nul 2>&1")
             appendLine("if errorlevel 1 (")
-            appendLine("  echo [dsh] WARNING: 在 Windows PATH 中找不到 dsh 命令, 请先安装 @deepseek-ai/dsh")
-            appendLine("  echo [dsh] 安装命令: npm i -g @deepseek-ai/dsh")
-            appendLine("  exit /b 1")
+            appendLine("  echo [dsh] 未检测到全局 dsh, 使用官方启动命令: npx @deepseek-ai/dsh web (首次运行会自动下载)")
+            appendLine("  npx --yes @deepseek-ai/dsh web --port $port${if (extra.isNotEmpty()) " $extra" else ""}")
+            appendLine("  exit /b %ERRORLEVEL%")
             appendLine(")")
             if (extra.isNotEmpty()) {
                 appendLine("dsh web --port $port $extra")
@@ -452,11 +506,13 @@ object DshServer {
             val stopShWsl = WslSupport.toWslPath(stopSh.absolutePath) ?: stopSh.absolutePath
             val pidFileWsl = ownerPidFileWsl
             val body = if (pidFileWsl != null) {
-                "DPID=\"\$(cat ${WslSupport.shellSingleQuote(pidFileWsl)} 2>/dev/null)\"\n" +
-                    "if [ -n \"\$DPID\" ]; then\n" +
-                    "  kill \"\$DPID\" 2>/dev/null || true\n" +
-                    "  sleep 1\n" +
-                    "  kill -9 \"\$DPID\" 2>/dev/null || true\n" +
+                // PID 文件内容: 普通 PID (全局 dsh 精确停止) 或 "-<pid>" (npx 会话, 按进程组停止)
+                "RAW=\"\$(cat ${WslSupport.shellSingleQuote(pidFileWsl)} 2>/dev/null)\"\n" +
+                    "if [ -n \"\$RAW\" ]; then\n" +
+                    "  case \"\$RAW\" in\n" +
+                    "    -*) DPID=\"\${RAW#-}\"; kill -- \"-\$DPID\" 2>/dev/null || true; sleep 1; kill -9 -- \"-\$DPID\" 2>/dev/null || true ;;\n" +
+                    "    *)  DPID=\"\$RAW\"; kill \"\$DPID\" 2>/dev/null || true; sleep 1; kill -9 \"\$DPID\" 2>/dev/null || true ;;\n" +
+                    "  esac\n" +
                     "fi\n"
             } else {
                 "# 无本插件启动的 dsh 进程标识, 不做任何停止\n"

@@ -14,11 +14,11 @@ import com.intellij.openapi.components.Storage
 @State(name = "CnCodecrabPluginsDshSettings", storages = [Storage("dsh-plugin.xml")])
 class DshSettingsState : PersistentStateComponent<DshSettingsState> {
 
-    /** dsh web 监听端口 */
-    var port: Int = 3090
+    /** dsh web 监听端口 (默认 3080, 与官方 dsh web 默认端口一致) */
+    var port: Int = 3080
 
-    /** 启动方式: "wsl" = 在 WSL 中启动; "windows" = 直接在 Windows 启动 */
-    var launchMode: String = "wsl"
+    /** 启动方式: "windows" = 直接在 Windows 启动 (默认); "wsl" = 在 WSL 中启动 */
+    var launchMode: String = "windows"
 
     /** 打开工具窗口时自动启动 */
     var autoStart: Boolean = true

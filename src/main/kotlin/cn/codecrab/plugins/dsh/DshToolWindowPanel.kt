@@ -100,6 +100,10 @@ class DshToolWindowPanel(
     @Volatile
     private var dshMissingWarned: Boolean = false
 
+    /** 本次启动日志里是否出现过"未检测到 Node.js 环境"错误 (决定失败通知的内容) */
+    @Volatile
+    private var nodeEnvMissingWarned: Boolean = false
+
     /** 本次启动日志里是否出现过 WSL 子系统错误 (如 Wsl/Service/E_UNEXPECTED) */
     @Volatile
     private var wslErrorSeen: Boolean = false
@@ -559,6 +563,7 @@ class DshToolWindowPanel(
                 DshServer.State.RUNNING -> {
                     startRequestedByThisPanel = false
                     dshMissingWarned = false
+                    nodeEnvMissingWarned = false
                     wslErrorSeen = false
                     statusLabel.text = STR_RUNNING.format(settings.port)
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
@@ -589,6 +594,7 @@ class DshToolWindowPanel(
                 DshServer.State.IDLE -> {
                     val failed = startRequestedByThisPanel
                     val missingDsh = dshMissingWarned
+                    val nodeMissing = nodeEnvMissingWarned
                     val wslError = wslErrorSeen
                     startRequestedByThisPanel = false
                     statusLabel.text = STR_IDLE
@@ -599,28 +605,38 @@ class DshToolWindowPanel(
                     pageLoaded = false
                     // 启动尝试失败 (而非主动停止): 弹通知提示原因
                     if (failed) {
-                        notifyStartFailed(missingDsh, wslError)
+                        notifyStartFailed(missingDsh, nodeMissing, wslError)
                     }
                     dshMissingWarned = false
+                    nodeEnvMissingWarned = false
                     wslErrorSeen = false
                 }
             }
         }
     }
 
-    /** 启动失败时弹系统通知: 区分"未安装 dsh" / "WSL 子系统错误" / 其他失败原因 */
-    private fun notifyStartFailed(missingDsh: Boolean, wslError: Boolean) {
+    /** 启动失败时弹系统通知: 区分"无 Node.js 环境" / "未安装 dsh" / "WSL 子系统错误" / 其他失败原因 */
+    private fun notifyStartFailed(missingDsh: Boolean, nodeMissing: Boolean, wslError: Boolean) {
         try {
             val group = NotificationGroupManager.getInstance().getNotificationGroup("Dsh")
             val content = when {
-                missingDsh -> buildString {
-                    append("未检测到 dsh 命令, 请先安装 @deepseek-ai/dsh:\n")
+                nodeMissing -> buildString {
+                    append("未检测到 Node.js 环境（node / npm / npx 均不可用），无法启动 dsh。\n")
                     append(if (settings.launchMode == "wsl") {
-                        "在 WSL 终端执行: npm i -g @deepseek-ai/dsh"
+                        "请在 WSL 中安装 Node.js（建议使用 nvm），安装完成后重新点击「启动」。\n"
                     } else {
-                        "在 Windows 执行: npm i -g @deepseek-ai/dsh"
+                        "请先安装 Node.js（https://nodejs.org/）并重新打开终端，然后重新点击「启动」。\n"
                     })
-                    append("\n安装完成后重新点击「启动」。详细日志见工具窗口底部日志面板。")
+                    append("详细日志见工具窗口底部日志面板。")
+                }
+                missingDsh -> buildString {
+                    append("未检测到 dsh 命令, 插件会自动改用官方启动命令 npx @deepseek-ai/dsh web。\n")
+                    append(if (settings.launchMode == "wsl") {
+                        "如果 npx 也无法使用, 请在 WSL 终端执行: npm i -g @deepseek-ai/dsh"
+                    } else {
+                        "如果 npx 也无法使用, 请在 Windows 执行: npm i -g @deepseek-ai/dsh"
+                    })
+                    append("\n安装完成后请重启IDEA。详细日志见工具窗口底部日志面板。")
                 }
                 wslError -> buildString {
                     append("WSL 启动失败 (Wsl/Service/E_UNEXPECTED 等子系统错误)。\n")
@@ -658,6 +674,10 @@ class DshToolWindowPanel(
         // 日志里出现"找不到 dsh"警告 -> 标记, 启动失败通知里给出对应提示
         if (line.contains("找不到 dsh")) {
             dshMissingWarned = true
+        }
+        // 日志里出现"未检测到 Node.js 环境" -> 标记, 通知里提示安装 Node.js
+        if (line.contains("未检测到 Node.js")) {
+            nodeEnvMissingWarned = true
         }
         // 出现 WSL 子系统错误标识 (如 Wsl/Service/E_UNEXPECTED) -> 标记, 通知里给 WSL 修复建议
         if (line.contains("Wsl/") || line.contains("E_UNEXPECTED") ||
