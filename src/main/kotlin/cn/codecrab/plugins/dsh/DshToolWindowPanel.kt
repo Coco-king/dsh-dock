@@ -45,6 +45,13 @@ class DshToolWindowPanel(
 
     private val settings = DshSettingsState.getInstance()
 
+    /**
+     * 状态监听器 (绑定到本面板实例, 注册与注销用的是同一实例)。
+     * 注册后 DshServer 会立即用当前状态回调一次, 保证新面板创建时
+     * 状态文字/按钮与"其他窗口已启动的 dsh"保持一致。
+     */
+    private val stateListener: (DshServer.State) -> Unit = ::onStateChanged
+
     private val statusLabel = JBLabel(STR_IDLE)
     private val startStopBtn = JButton("启动")
     private val refreshBtn = JButton("刷新")
@@ -81,9 +88,13 @@ class DshToolWindowPanel(
     @Volatile
     private var syncSessionIds: List<String>? = null
 
-    /** 一次启动尝试是否正在进行 (STARTING 置位, RUNNING/STOPPING/失败时清除), 用于识别"启动失败" */
+    /**
+     * 本面板是否发起过尚未完成的启动尝试。
+     * 状态变化现在会广播到所有窗口的面板, 启动失败通知只在"发起启动的那个面板"弹出,
+     * 因此该标志只能由本面板自己的启动调用置位, 不能在 STARTING 回调里统一置位。
+     */
     @Volatile
-    private var startInProgress: Boolean = false
+    private var startRequestedByThisPanel: Boolean = false
 
     /** 本次启动日志里是否出现过"找不到 dsh"警告 (决定失败通知的内容) */
     @Volatile
@@ -100,12 +111,15 @@ class DshToolWindowPanel(
         add(createContentArea(), BorderLayout.CENTER)
         add(logScroll, BorderLayout.SOUTH)
 
-        // 面板销毁时从注册表移除 (工具窗口关闭/项目关闭)
+        // 面板销毁时从注册表移除、注销状态监听 (工具窗口关闭/项目关闭)
         DshDisposer.register(parentDisposable, com.intellij.openapi.Disposable {
             DshToolWindowRegistry.unregister(project)
+            DshServer.removeStateListener(stateListener)
         })
 
-        updateButtons(DshServer.state)
+        // 注册状态监听: 立即以当前状态回调一次 (dsh 可能已在其他窗口启动), 后续所有窗口的
+        // 启停状态变化都会广播到这里, 保证每个窗口的状态文字/按钮始终一致
+        DshServer.addStateListener(stateListener)
         if (settings.autoStart) {
             // 稍后自动启动, 先渲染 UI
             SwingUtilities.invokeLater {
@@ -152,7 +166,7 @@ class DshToolWindowPanel(
 
         startStopBtn.addActionListener {
             if (DshServer.state == DshServer.State.RUNNING || DshServer.state == DshServer.State.STARTING) {
-                DshServer.stop(::appendLog, ::onStateChanged)
+                DshServer.stop(::appendLog)
             } else {
                 ensureRunning()
             }
@@ -427,7 +441,8 @@ class DshToolWindowPanel(
     /** 启动 dsh (供工具窗口按钮与引用注入共用) */
     fun ensureRunning() {
         appendLog("准备启动 dsh...")
-        DshServer.start(project.basePath, ::appendLog, ::onStateChanged)
+        // 仅当真正发起启动尝试 (非"已在运行/端口被占用") 时才标记本面板, 供失败通知使用
+        startRequestedByThisPanel = DshServer.start(project.basePath, ::appendLog)
     }
 
     private fun reloadWebUi() {
@@ -542,7 +557,7 @@ class DshToolWindowPanel(
             updateButtons(state)
             when (state) {
                 DshServer.State.RUNNING -> {
-                    startInProgress = false
+                    startRequestedByThisPanel = false
                     dshMissingWarned = false
                     wslErrorSeen = false
                     statusLabel.text = STR_RUNNING.format(settings.port)
@@ -562,21 +577,20 @@ class DshToolWindowPanel(
                     }
                 }
                 DshServer.State.STARTING -> {
-                    startInProgress = true
                     statusLabel.text = STR_STARTING
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                 }
                 DshServer.State.STOPPING -> {
                     // 用户主动停止 (含启动过程中点停止), 不算启动失败
-                    startInProgress = false
+                    startRequestedByThisPanel = false
                     statusLabel.text = STR_STOPPING
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                 }
                 DshServer.State.IDLE -> {
-                    val failed = startInProgress
+                    val failed = startRequestedByThisPanel
                     val missingDsh = dshMissingWarned
                     val wslError = wslErrorSeen
-                    startInProgress = false
+                    startRequestedByThisPanel = false
                     statusLabel.text = STR_IDLE
                     statusLabel.foreground = JBColor.GRAY
                     externalBrowserOpenedForSession = false

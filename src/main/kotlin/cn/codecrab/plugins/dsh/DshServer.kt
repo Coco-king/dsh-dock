@@ -32,6 +32,37 @@ object DshServer {
     var state: State = State.IDLE
         private set
 
+    /** 状态监听器: 工具窗口面板注册后, 任意窗口启停 dsh 都会同步刷新所有面板的 UI */
+    private val stateListeners = java.util.concurrent.CopyOnWriteArrayList<(State) -> Unit>()
+
+    /**
+     * 注册状态监听 (工具窗口面板创建时调用)。
+     * 注册后立即以当前状态回调一次, 便于新面板初始化 UI —— 多窗口 (同一 IDE 进程内多个项目窗口)
+     * 共用本单例, dsh 可能已在其他窗口启动, 而状态回调只在状态切换时触发,
+     * 若不创建时同步, 会出现"按钮显示停止、状态文字却显示未启动"的不一致。
+     */
+    fun addStateListener(listener: (State) -> Unit) {
+        stateListeners.add(listener)
+        listener(state)
+    }
+
+    /** 注销状态监听 (面板销毁时调用) */
+    fun removeStateListener(listener: (State) -> Unit) {
+        stateListeners.remove(listener)
+    }
+
+    /** 统一的状态变更入口: 更新状态并广播给所有已注册监听器 (任意线程可调用) */
+    private fun setState(newState: State) {
+        state = newState
+        for (listener in stateListeners) {
+            try {
+                listener(newState)
+            } catch (t: Throwable) {
+                LOG.warn("state listener failed", t)
+            }
+        }
+    }
+
     @Volatile
     private var process: Process? = null
 
@@ -68,40 +99,40 @@ object DshServer {
 
     /**
      * 启动 dsh。
+     * 状态变化通过 [addStateListener] 注册的监听器广播给所有面板。
      *
      * @param projectPath 当前项目根路径
      * @param onLog       日志回调 (任意线程, 调用方负责切到 EDT)
-     * @param onState     状态变化回调 (任意线程)
+     * @return true 表示真正发起了一次启动尝试 (可能随后同步失败, 调用方可据此标记"启动失败"通知);
+     *         false 表示未发起 (端口无效 / 已在运行 / 端口已被占用直接复用)
      */
-    fun start(projectPath: String?, onLog: (String) -> Unit, onState: (State) -> Unit) {
+    fun start(projectPath: String?, onLog: (String) -> Unit): Boolean {
         val settings = DshSettingsState.getInstance()
         val port = settings.port
         if (port !in 1..65535) {
             onLog("端口配置无效: $port (应为 1-65535), 请检查设置")
-            return
+            return false
         }
         synchronized(lock) {
             if (state == State.STARTING || state == State.RUNNING) {
                 onLog("dsh 已在运行 (state=${state.name})")
-                return
+                return false
             }
             if (WslSupport.isPortOpen(port)) {
                 onLog("端口 $port 已有服务在监听, 直接打开 WebUI (不重复启动)")
-                state = State.RUNNING
-                onState(state)
-                return
+                setState(State.RUNNING)
+                return false
             }
-            state = State.STARTING
-            onState(state)
+            setState(State.STARTING)
             try {
-                launch(projectPath, port, settings, onLog, onState)
+                launch(projectPath, port, settings, onLog)
             } catch (t: Throwable) {
                 LOG.warn("launch dsh failed", t)
                 onLog("启动失败: ${t.message}")
-                state = State.IDLE
-                onState(state)
+                setState(State.IDLE)
             }
         }
+        return true
     }
 
     private fun launch(
@@ -109,19 +140,17 @@ object DshServer {
         port: Int,
         settings: DshSettingsState,
         onLog: (String) -> Unit,
-        onState: (State) -> Unit,
     ) {
         val mode = settings.launchMode
         when (mode) {
-            "windows" -> launchOnWindows(projectPath, port, settings, onLog, onState)
+            "windows" -> launchOnWindows(projectPath, port, settings, onLog)
             else -> {
                 if (!WslSupport.isWindows) {
                     onLog("WSL 模式仅在 Windows + WSL 环境下可用, 请到设置中改用「Windows 直接启动」")
-                    state = State.IDLE
-                    onState(state)
+                    setState(State.IDLE)
                     return
                 }
-                launchOnWsl(projectPath, port, settings, onLog, onState)
+                launchOnWsl(projectPath, port, settings, onLog)
             }
         }
     }
@@ -133,7 +162,6 @@ object DshServer {
         port: Int,
         settings: DshSettingsState,
         onLog: (String) -> Unit,
-        onState: (State) -> Unit,
     ) {
         val wslProject = WslSupport.toWslPath(projectPath)
         val extra = settings.extraDshArgs.trim()
@@ -199,7 +227,7 @@ object DshServer {
             crlf = true
         )
         onLog("wsl 工作目录: ${wslProject ?: "(WSL HOME)"}  (项目空间默认使用当前项目根路径)")
-        startWrapper(cmdFile, onLog, port, onState, "wsl")
+        startWrapper(cmdFile, onLog, port, "wsl")
     }
 
     // ---------- Windows 直接启动 ----------
@@ -209,7 +237,6 @@ object DshServer {
         port: Int,
         settings: DshSettingsState,
         onLog: (String) -> Unit,
-        onState: (State) -> Unit,
     ) {
         val extra = settings.extraDshArgs.trim()
         if (!WslSupport.isWindows) {
@@ -237,8 +264,8 @@ object DshServer {
             )
             stopCmdPath = stopSh.absolutePath
             drain(p, onLog)
-            watch(p, port, onLog, onState)
-            waitForReadyInThread(port, p, onLog, onState)
+            watch(p, port, onLog)
+            waitForReadyInThread(port, p, onLog)
             return
         }
 
@@ -264,11 +291,11 @@ object DshServer {
         WslSupport.writeTextFile(cmdFile, content, crlf = true)
         onLog("Windows 模式: 已生成启动命令 ${cmdFile.name}")
         onLog("工作目录: ${if (projectPath != null && File(projectPath).isDirectory) projectPath else "(缺省)"}  (项目空间默认使用当前项目根路径)")
-        startWrapper(cmdFile, onLog, port, onState, "windows")
+        startWrapper(cmdFile, onLog, port, "windows")
     }
 
     /** 通过隐藏的 PowerShell 执行 .cmd, 并挂上输出/进程 watching 和端口轮询 */
-    private fun startWrapper(cmdFile: File, onLog: (String) -> Unit, port: Int, onState: (State) -> Unit, mode: String) {
+    private fun startWrapper(cmdFile: File, onLog: (String) -> Unit, port: Int, mode: String) {
         val launchCmd = listOf(
             "powershell.exe",
             "-NoProfile",
@@ -283,8 +310,8 @@ object DshServer {
         stopCmdPath = prepareStopScript(port, mode)
         startExitWatchdog(stopCmdPath!!, port)
         drain(p, onLog)
-        watch(p, port, onLog, onState)
-        waitForReadyInThread(port, p, onLog, onState)
+        watch(p, port, onLog)
+        waitForReadyInThread(port, p, onLog)
     }
 
     // ---------- 输出 / 生命周期 ----------
@@ -304,7 +331,7 @@ object DshServer {
         reader(p.errorStream, "[dsh!]")
     }
 
-    private fun watch(p: Process, port: Int, onLog: (String) -> Unit, onState: (State) -> Unit) {
+    private fun watch(p: Process, port: Int, onLog: (String) -> Unit) {
         Thread({
             try {
                 val code = p.waitFor()
@@ -315,9 +342,8 @@ object DshServer {
                     } else {
                         onLog("dsh 进程已退出 (exit=$code)")
                         synchronized(lock) {
-                            if (state == State.STARTING || state == State.RUNNING) state = State.IDLE
+                            if (state == State.STARTING || state == State.RUNNING) setState(State.IDLE)
                         }
-                        onState(State.IDLE)
                     }
                 }
             } catch (_: InterruptedException) {
@@ -325,11 +351,11 @@ object DshServer {
         }, "dsh-plugin-watchdog").apply { isDaemon = true }.start()
     }
 
-    private fun waitForReadyInThread(port: Int, p: Process, onLog: (String) -> Unit, onState: (State) -> Unit) {
-        Thread({ waitForReady(port, p, onLog, onState) }, "dsh-plugin-port-poll").apply { isDaemon = true }.start()
+    private fun waitForReadyInThread(port: Int, p: Process, onLog: (String) -> Unit) {
+        Thread({ waitForReady(port, p, onLog) }, "dsh-plugin-port-poll").apply { isDaemon = true }.start()
     }
 
-    private fun waitForReady(port: Int, p: Process, onLog: (String) -> Unit, onState: (State) -> Unit) {
+    private fun waitForReady(port: Int, p: Process, onLog: (String) -> Unit) {
         val deadline = System.currentTimeMillis() + 120_000
         while (System.currentTimeMillis() < deadline) {
             if (Thread.currentThread().isInterrupted) return
@@ -339,18 +365,16 @@ object DshServer {
             if (WslSupport.isPortOpen(port)) {
                 synchronized(lock) {
                     if (state == State.STOPPING) return
-                    state = State.RUNNING
+                    setState(State.RUNNING)
                 }
                 onLog("WebUI 就绪: ${webUrl(port)}")
-                onState(State.RUNNING)
                 return
             }
             if (!p.isAlive) {
                 onLog("启动进程已退出, 端口 $port 未就绪, 请查看上方日志排查")
                 synchronized(lock) {
-                    if (state == State.STARTING) state = State.IDLE
+                    if (state == State.STARTING) setState(State.IDLE)
                 }
-                onState(State.IDLE)
                 return
             }
             try {
@@ -361,24 +385,23 @@ object DshServer {
         }
         onLog("等待 $port 端口就绪超时 (120s), dsh 可能未启动成功")
         synchronized(lock) {
-            if (state == State.STARTING) state = State.IDLE
+            if (state == State.STARTING) setState(State.IDLE)
         }
-        onState(State.IDLE)
     }
 
     /**
      * 停止 dsh (只停本插件启动的进程, 外部同端口 dsh 不受影响)。
+     * 状态变化通过 [addStateListener] 注册的监听器广播给所有面板。
      *  - WSL 模式: 按 PID 标识文件 kill
      *  - Windows 模式: taskkill 终止本插件持有的进程树
      */
-    fun stop(onLog: (String) -> Unit, onState: (State) -> Unit) {
+    fun stop(onLog: (String) -> Unit) {
         synchronized(lock) {
             if (state == State.IDLE || state == State.STOPPING) {
                 onLog("当前没有运行中的 dsh (state=${state.name})")
                 return
             }
-            state = State.STOPPING
-            onState(state)
+            setState(State.STOPPING)
             Thread({
                 try {
                     val stopPath = stopCmdPath
@@ -407,8 +430,7 @@ object DshServer {
                     process = null
                     stopCmdPath = null
                     ownerPidFileWsl = null
-                    state = State.IDLE
-                    onState(state)
+                    setState(State.IDLE)
                 }
             }, "dsh-plugin-stop").apply { isDaemon = true }.start()
         }
