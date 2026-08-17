@@ -1,11 +1,37 @@
 # Dsh Dock - DeepSeek Harness IDEA 插件
 
 <!-- Plugin description -->
-Dsh Dock is an IntelliJ IDEA plugin that brings the DeepSeek Harness assistant (`dsh web`) into your IDE. One click on the whale icon in the right tool window starts the server and opens its WebUI in a built-in browser panel, so you can chat with DeepSeek models without leaving the IDE. It works with both WSL and native Windows startup, and uses the current project root as the dsh workspace. If dsh is already running on the configured port (e.g. started by yourself), it skips launching and opens the WebUI directly in the built-in browser.
+**中文**
 
-Dsh Dock 是一个 IntelliJ IDEA 插件：点击右侧工具栏的鲸鱼图标，一键启动 DeepSeek Harness（`dsh web`），WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话。支持在 WSL 中启动或在 Windows 中直接启动，并以当前打开的项目根目录作为 dsh 工作空间。如果端口已被监听（比如你自己已启动过 dsh），插件会跳过启动、直接在内置浏览器中打开 WebUI。
+1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
+   WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
+2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
+   两种方式的端口与附加参数可分别配置
+3. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间
+4. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
+   直接在内置浏览器中打开 WebUI，不会重复启动进程
+5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
+6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+7. **兼容版本**：兼容 IntelliJ IDEA 2022.3 及之后的所有版本
+8. **项目开源**：<https://gitee.com/kkcoco/dsh-idea-plugin>
 
-Right-click actions send the selected code or file into the Dsh input box as a `@path` reference, so the assistant can read the file when needed. On Windows, dsh is launched through a hidden PowerShell process — if your security software intercepts it, please allow it. The plugin is compatible with IntelliJ IDEA 2022.3 and later. Open source: <https://gitee.com/kkcoco/dsh-idea-plugin>
+**English**
+
+1. **One-click start of dsh**: Click the whale icon in the right tool window bar to open the Dsh Dock
+   tool window and start the DeepSeek Harness assistant (`dsh web`) with one click; the WebUI is shown
+   directly in the built-in browser panel of the tool window, so you can chat with DeepSeek models
+   without leaving the IDE
+2. **Two launch modes (optional)**: Start in **WSL** or **directly in Windows**, with separately
+   configurable ports and extra arguments for each mode
+3. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace
+4. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
+   it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes
+5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
+   reference with one click, so the assistant can read the file when needed
+6. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
+   software intercepts it, please allow it
+7. **Compatibility**: Compatible with IntelliJ IDEA 2022.3 and later
+8. **Open source**: <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址
