@@ -7,6 +7,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.wm.WindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
@@ -101,6 +102,19 @@ class DshToolWindowPanel(
     private var syncAutoReloaded: Boolean = false
 
     /**
+     * 本窗口最近一次成功同步为共享 dsh 工作空间的项目 dsh 路径 (null = 尚未成功同步)。
+     * 多个窗口共用同一个 dsh 实例: 只有"活动窗口"才同步自己的工作空间。
+     * 该值**跨 dsh 重启保留** (dsh 页面在服务重启后会自动重连自愈, 不需要整页刷新),
+     * 用于判断窗口重新激活时: 若最近一次同步的正是本项目, 则工作空间已经是本项目的, 不整页刷新。
+     */
+    @Volatile
+    private var lastSyncedPath: String? = null
+
+    /** 当前激活周期是否已做过一次"激活恢复"同步 (每个激活周期最多一次, 避免反复重载) */
+    @Volatile
+    private var activationResynced: Boolean = false
+
+    /**
      * 本面板是否发起过尚未完成的启动尝试。
      * 状态变化现在会广播到所有窗口的面板, 启动失败通知只在"发起启动的那个面板"弹出,
      * 因此该标志只能由本面板自己的启动调用置位, 不能在 STARTING 回调里统一置位。
@@ -163,6 +177,9 @@ class DshToolWindowPanel(
                     appendLog("端口 $port 已就绪, 加载 WebUI")
                     loadWebUi()
                 }
+            } else if (jcefAvailable && webUiLoaded) {
+                // 页面已加载时: 窗口重新获得焦点后, 必要时把共享工作空间切回本窗口的项目
+                checkActivationResync()
             }
         }
         timer.isRepeats = true
@@ -476,6 +493,11 @@ class DshToolWindowPanel(
      * 加载 WebUI。加载前先通过 dsh 的 /api 同步工作空间 (确保当前项目是会话工作空间,
      * 详见 [DshWorkspaceApi]), 完成后才加载页面 —— 这样页面初始选中就会落在当前项目上。
      * 同步失败不影响使用 (按现状直接加载)。
+     *
+     * 多窗口共用同一个 dsh 实例 (同一进程的多个项目窗口、或复用同一端口的多个 IDE 实例):
+     * **只有当前活动窗口才同步工作空间, 非活动窗口不刷新页面、不抢占**共享 dsh 的"项目空间"。
+     * 非活动窗口已显示的页面保持原样 (不会因其他窗口重启 dsh 而被整个刷掉):
+     * 窗口重新获得焦点后由 [checkActivationResync] 再同步并切回自己的项目。
      */
     private fun loadWebUi() {
         val port = settings.currentPort()
@@ -484,6 +506,13 @@ class DshToolWindowPanel(
         if (projectPath == null) {
             appendLog("已加载: $url")
             browser?.loadURL(url)
+            return
+        }
+        if (!isActiveWindow()) {
+            // 后台窗口: 不刷新页面、也不推送工作空间 —— 避免 dsh 重启或其他窗口操作时,
+            // 把正在显示对话的页面整个刷掉, 或把共享 dsh 的工作空间抢成别的项目。
+            // 已加载页面保持原样, 窗口重新获得焦点后由 [checkActivationResync] 恢复。
+            appendLog("当前窗口非活动, 跳过页面刷新与工作空间同步")
             return
         }
         appendLog("同步工作空间到当前项目: $projectPath")
@@ -496,6 +525,8 @@ class DshToolWindowPanel(
                 syncSessionIds = result.sessionIds
                 workspaceSyncFailed = false
                 syncAutoReloaded = false
+                // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)
+                lastSyncedPath = dshPath
             } else {
                 appendLog("工作空间同步不可用(不影响使用), 如需切换请在 WebUI 侧边栏手动选择")
                 // 页面加载完成后自动刷新一次重试 (见 [autoReloadAfterSyncFailure])
@@ -507,6 +538,50 @@ class DshToolWindowPanel(
                 browser?.loadURL(url)
             }
         }, "dsh-plugin-workspace-ensure").apply { isDaemon = true }.start()
+    }
+
+    /**
+     * 本面板所在窗口是否为当前活动(聚焦)窗口。
+     * 用 `WindowManager.getFrame(project)` 取本窗口的 JFrame, 与 AWT 键盘焦点窗口比较:
+     * 相等则本窗口是活动窗口; 本 JVM 内没有键盘焦点窗口 (单窗口 / 焦点在内嵌浏览器等
+     * 原生组件上) 时视为活动, 保证单窗口用户行为与之前完全一致。
+     * 仅用稳定 API (WindowManager.getFrame + AWT KeyboardFocusManager), 跨 IntelliJ 2022.3 起全版本安全。
+     */
+    private fun isActiveWindow(): Boolean {
+        return try {
+            val wm = WindowManager.getInstance()
+            val frame = wm.getFrame(project) ?: return true
+            val focused = java.awt.KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusedWindow()
+            if (focused == null) return true
+            frame == focused
+        } catch (_: Throwable) {
+            true
+        }
+    }
+
+    /** 本项目在 dsh 侧的工作空间路径 (按启动方式转换, 见 [DshReference]) */
+    private fun currentProjectDshPath(): String? =
+        DshReference.dshPathFromString(project.basePath, settings.launchMode)
+
+    /**
+     * 激活恢复: 窗口从非活动变为活动时, 若本窗口项目**尚未成功同步过**为共享 dsh 的工作空间
+     * (页面从未加载 / 上次同步失败), 就同步一次并刷新页面把它切回自己的项目。
+     * 已同步过自己项目的窗口切回时**不整页刷新** —— dsh 页面在服务重启后由客户端自动重连自愈,
+     * 且窗口本就在显示自己的工作空间, 无需重载。
+     * 每个激活周期最多触发一次 ([activationResynced])。
+     */
+    private fun checkActivationResync() {
+        if (project.isDisposed) return
+        if (!isActiveWindow()) {
+            // 窗口失去活动状态: 重置本激活周期的恢复标记, 下次激活可再次恢复
+            activationResynced = false
+            return
+        }
+        if (activationResynced) return
+        activationResynced = true
+        if (lastSyncedPath == currentProjectDshPath()) return
+        appendLog("窗口已激活, 将工作空间同步到当前项目...")
+        loadWebUi()
     }
 
     /**
@@ -644,6 +719,9 @@ class DshToolWindowPanel(
                     webUiLoaded = false
                     // 页面视为过期 (可能还停留在旧 WebUI / 已失效页面), 重启后需重新加载再注入
                     pageLoaded = false
+                    // 激活恢复标记复位。不在此清空 lastSyncedPath: dsh 页面在服务重启后会自动重连
+                    // 自愈 (客户端连接循环指数退避重连), 切回本窗口时若工作空间已是本项目就不再整页刷新
+                    activationResynced = false
                     // 启动尝试失败 (而非主动停止): 弹通知提示原因
                     if (failed) {
                         notifyStartFailed(missingDsh, nodeMissing, wslError)

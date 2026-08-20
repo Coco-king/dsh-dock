@@ -1,5 +1,23 @@
 # Changelog / 变更日志
 
+## [1.0.2] - Unreleased
+
+### 中文 (Chinese)
+
+- **修复（Fixed）**：修复多个窗口同时打开插件页时（同一 IDE 的多个项目窗口，或复用同一端口的
+  多个 IDE 实例），共享 dsh 的「项目空间」可能被其他窗口抢占、切换成别的项目路径的问题。
+  现在工作空间只跟随当前**活动窗口**：后台窗口不刷新页面、也不抢占工作空间；窗口重新获得焦点时
+  若工作空间已是自己的项目则保持页面（dsh 页面会自动重连自愈），需要时才切回自己项目的路径
+
+### English
+
+- **Fixed**: Fixed an issue where, when multiple windows had the plugin page open (multiple project
+  windows in one IDE, or multiple IDE instances reusing the same port), the shared dsh "project space"
+  could be hijacked by another window and point to a different project path. Now the workspace follows
+  only the **active window**: a background window neither refreshes its page nor hijacks the workspace;
+  when a window regains focus it keeps its page if the workspace is already its own (the dsh page
+  reconnects and recovers automatically), and only switches back to its own project when needed
+
 ## [1.0.1] - 2026-08-17
 
 ### 中文 (Chinese)

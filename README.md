@@ -9,7 +9,8 @@
    without leaving the IDE
 2. **Two launch modes (optional)**: Start in **WSL** or **directly in Windows**, with separately
    configurable ports and extra arguments for each mode
-3. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace
+3. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
+   with multiple open windows it follows the **active window**, so other windows never hijack the project space
 4. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
    it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes
 5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
@@ -25,7 +26,8 @@
    WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
 2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
    两种方式的端口与附加参数可分别配置
-3. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间
+3. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
+   其他窗口不会抢占项目空间
 4. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
    直接在内置浏览器中打开 WebUI，不会重复启动进程
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
@@ -58,7 +60,9 @@
   - 路径按启动模式自动转换（WSL 模式用 `/mnt/...`，Windows 模式用 `C:/...`），
     与 dsh 的 `@路径` 文件引用约定一致，模型需要时会通过 read 工具读取
 - **项目空间默认项目根目录**：以当前打开的项目根路径作为 dsh 的工作目录启动，
-  并自动把当前项目同步为 WebUI 的会话工作空间（即使上次用过别的项目，也会切回当前项目）
+  并自动把当前项目同步为 WebUI 的会话工作空间（即使上次用过别的项目，也会切回当前项目）。
+  多个窗口同时打开插件页时，工作空间跟随当前**活动窗口**：后台窗口不刷新页面、不抢占，
+  切换到某窗口时若工作空间已是自己的项目则不打扰（dsh 页面会自动重连自愈），必要时才切回
 - **主题/语言**：WebUI 主题跟随 IDE（暗色 IDE 自动深色）；语言可选跟随 IDE/浏览器、简体中文或 English
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
@@ -145,6 +149,10 @@
   因此插件在每次加载 WebUI 前，通过 dsh 自带的 `/api` RPC 通道（`POST /api/workspace.create` 等，
   与 dsh 客户端同一协议、经 loopback 信任围栏放行）把当前项目注册为工作空间，并在它不是"最近"时
   新建一个会话提升其新鲜度——这样页面初始选中就会落在当前项目上，而不是上次用过的项目。
+  **多窗口隔离**：多个窗口共用同一个 dsh 实例（同一进程的多个项目窗口、或复用同一端口的多个
+  IDE 实例），为避免互相把工作空间抢成别的项目，插件只在**当前活动窗口**同步工作空间：
+  后台窗口不刷新页面、不抢占「项目空间」；窗口重新获得焦点时若工作空间已是自己的项目则保持
+  页面（dsh 页面在服务重启后由客户端自动重连自愈），必要时才同步并切回自己的项目。
   同时还会：
   - **空白会话卫生**：归档项目工作空间里遗留的空白会话（空会话无内容损失）。dsh 的"新会话"
     会**复用**工作空间里已有的空白会话（它就是"新会话"槽），遗留的旧空白会让"新会话"点了没反应；
