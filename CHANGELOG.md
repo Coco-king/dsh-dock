@@ -8,6 +8,12 @@
   多个 IDE 实例），共享 dsh 的「项目空间」可能被其他窗口抢占、切换成别的项目路径的问题。
   现在工作空间只跟随当前**活动窗口**：后台窗口不刷新页面、也不抢占工作空间；窗口重新获得焦点时
   若工作空间已是自己的项目则保持页面（dsh 页面会自动重连自愈），需要时才切回自己项目的路径
+- **修复（Fixed）**：dsh 升级到 v0.1.0-rc.8 后 `dsh web` 默认会用系统浏览器打开 UI，
+  与插件内嵌浏览器冲突。插件现在会自动为受支持版本附加 `--no-open`；
+  低于该版本的 dsh 不认识此参数，会自动跳过以避免启动报错
+- **修复（Fixed）**：启动时不再出现"先加载失败、再整页刷新重试"的多次刷新/多次工作空间同步 ——
+  同步改为在加载页面前带短重试（约 8s 上限），成功后一次性加载页面；
+  激活恢复只在窗口真正从"非活动"切回"活动"时触发，启动时不再误触发
 
 ### English
 
@@ -17,6 +23,14 @@
   only the **active window**: a background window neither refreshes its page nor hijacks the workspace;
   when a window regains focus it keeps its page if the workspace is already its own (the dsh page
   reconnects and recovers automatically), and only switches back to its own project when needed
+- **Fixed**: Since dsh v0.1.0-rc.8, `dsh web` opens the UI in the default browser by default, which
+  conflicts with the plugin's embedded browser. The plugin now appends `--no-open` automatically where
+  the installed dsh supports it; on older versions that reject the flag it is skipped to avoid a
+  startup error
+- **Fixed**: Startup no longer goes through "load page first, then full-page-refresh retry" with
+  repeated reloads and repeated workspace syncs. The workspace sync now retries briefly (up to ~8s)
+  **before** loading the page, so the page loads once with the correct workspace; activation
+  recovery only triggers on a real "inactive -> active" window switch and no longer misfires at startup
 
 ## [1.0.1] - 2026-08-17
 

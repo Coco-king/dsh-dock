@@ -77,6 +77,9 @@ class DshToolWindowPanel(
     private var externalBrowserOpenedForSession: Boolean = false
     private var webUiLoaded: Boolean = false
 
+    /** 单飞标记: 一次"同步+加载"进行中时, 忽略并发的重复加载请求 (见 [loadWebUi]) */
+    private val loadInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** 主框架页面是否已完成加载 (onLoadEnd 置位), 用于判断注入时机 */
     @Volatile
     private var pageLoaded: Boolean = false
@@ -109,6 +112,10 @@ class DshToolWindowPanel(
      */
     @Volatile
     private var lastSyncedPath: String? = null
+
+    /** 看门狗上次观测到的本窗口是否为活动窗口 (用于判断是否发生了真正的"非活动 -> 活动"切换) */
+    @Volatile
+    private var lastObservedActive: Boolean? = null
 
     /** 当前激活周期是否已做过一次"激活恢复"同步 (每个激活周期最多一次, 避免反复重载) */
     @Volatile
@@ -491,8 +498,9 @@ class DshToolWindowPanel(
 
     /**
      * 加载 WebUI。加载前先通过 dsh 的 /api 同步工作空间 (确保当前项目是会话工作空间,
-     * 详见 [DshWorkspaceApi]), 完成后才加载页面 —— 这样页面初始选中就会落在当前项目上。
-     * 同步失败不影响使用 (按现状直接加载)。
+     * 详见 [DshWorkspaceApi]), **同步成功后**才加载页面 —— 这样页面初始选中就会落在当前项目上。
+     * 端口刚就绪时 dsh /api 可能尚未完全就绪, 因此在加载前小间隔重试同步 (约 8s 上限),
+     * 避免"先加载失败、再整页刷新重试"的多次刷新; 重试仍失败才按现状直接加载 (不影响使用)。
      *
      * 多窗口共用同一个 dsh 实例 (同一进程的多个项目窗口、或复用同一端口的多个 IDE 实例):
      * **只有当前活动窗口才同步工作空间, 非活动窗口不刷新页面、不抢占**共享 dsh 的"项目空间"。
@@ -515,27 +523,52 @@ class DshToolWindowPanel(
             appendLog("当前窗口非活动, 跳过页面刷新与工作空间同步")
             return
         }
+        // 单飞: 已有一次"同步+加载"在进行时, 忽略并发的重复请求 (RUNNING 回调/看门狗/手动刷新),
+        // 避免"先加载一次、工作空间同步完又刷新一次"的体验问题
+        if (!loadInFlight.compareAndSet(false, true)) return
         appendLog("同步工作空间到当前项目: $projectPath")
         Thread({
-            val dshPath = DshReference.dshPathFromString(projectPath, settings.launchMode)
-            val result = DshWorkspaceApi.ensureProjectWorkspace(port, dshPath)
-            if (result != null) {
-                appendLog("工作空间已就绪: ${dshPath ?: projectPath}")
-                // 记录当前项目的 sessionIds, 供 onLoadStart 清除不属于本项目的持久化会话选择
-                syncSessionIds = result.sessionIds
-                workspaceSyncFailed = false
-                syncAutoReloaded = false
-                // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)
-                lastSyncedPath = dshPath
-            } else {
-                appendLog("工作空间同步不可用(不影响使用), 如需切换请在 WebUI 侧边栏手动选择")
-                // 页面加载完成后自动刷新一次重试 (见 [autoReloadAfterSyncFailure])
-                workspaceSyncFailed = true
-            }
-            SwingUtilities.invokeLater {
-                if (project.isDisposed) return@invokeLater
-                appendLog("已加载: $url")
-                browser?.loadURL(url)
+            var loadScheduled = false
+            try {
+                val dshPath = DshReference.dshPathFromString(projectPath, settings.launchMode)
+                // 端口刚就绪时 dsh 的 /api 可能还有一小段未就绪窗口: 在加载页面前小间隔重试同步,
+                // 成功后才加载 —— 避免"先加载失败 → 整页刷新重试"导致的多次刷新/多次同步
+                var result: DshWorkspaceApi.WorkspaceSyncResult? = null
+                val deadline = System.currentTimeMillis() + 8000
+                while (result == null && System.currentTimeMillis() < deadline) {
+                    result = DshWorkspaceApi.ensureProjectWorkspace(port, dshPath)
+                    if (result == null && System.currentTimeMillis() < deadline) {
+                        try {
+                            Thread.sleep(700)
+                        } catch (_: InterruptedException) {
+                            break
+                        }
+                    }
+                }
+                if (result != null) {
+                    appendLog("工作空间已就绪: ${dshPath ?: projectPath}")
+                    // 记录当前项目的 sessionIds, 供 onLoadStart 清除不属于本项目的持久化会话选择
+                    syncSessionIds = result.sessionIds
+                    workspaceSyncFailed = false
+                    syncAutoReloaded = false
+                    // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)
+                    lastSyncedPath = dshPath
+                } else {
+                    appendLog("工作空间同步不可用(不影响使用), 如需切换请在 WebUI 侧边栏手动选择")
+                    // 页面加载完成后自动刷新一次重试 (见 [autoReloadAfterSyncFailure])
+                    workspaceSyncFailed = true
+                }
+                loadScheduled = true
+                SwingUtilities.invokeLater {
+                    // 先释放单飞标记再发起加载 (同一 EDT 任务内不会插入新的加载请求)
+                    loadInFlight.set(false)
+                    if (project.isDisposed) return@invokeLater
+                    appendLog("已加载: $url")
+                    browser?.loadURL(url)
+                }
+            } finally {
+                // 兜底: 若同步/加载流程异常中断 (invokeLater 未安排), 也要释放单飞标记
+                if (!loadScheduled) loadInFlight.set(false)
             }
         }, "dsh-plugin-workspace-ensure").apply { isDaemon = true }.start()
     }
@@ -564,19 +597,26 @@ class DshToolWindowPanel(
         DshReference.dshPathFromString(project.basePath, settings.launchMode)
 
     /**
-     * 激活恢复: 窗口从非活动变为活动时, 若本窗口项目**尚未成功同步过**为共享 dsh 的工作空间
+     * 激活恢复: 窗口从**非活动真正变为活动**时, 若本窗口项目尚未成功同步为共享 dsh 的工作空间
      * (页面从未加载 / 上次同步失败), 就同步一次并刷新页面把它切回自己的项目。
      * 已同步过自己项目的窗口切回时**不整页刷新** —— dsh 页面在服务重启后由客户端自动重连自愈,
      * 且窗口本就在显示自己的工作空间, 无需重载。
+     * 启动/首次加载时窗口本就处于活动状态 (非"切换"而来), 不在这里触发 —— 启动时的
+     * 同步已由 [loadWebUi] 的加载前重试负责, 避免启动时多一次整页刷新。
      * 每个激活周期最多触发一次 ([activationResynced])。
      */
     private fun checkActivationResync() {
         if (project.isDisposed) return
-        if (!isActiveWindow()) {
+        val active = isActiveWindow()
+        val prev = lastObservedActive
+        lastObservedActive = active
+        if (!active) {
             // 窗口失去活动状态: 重置本激活周期的恢复标记, 下次激活可再次恢复
             activationResynced = false
             return
         }
+        // 仅在窗口从"非活动"变为"活动"时恢复; 首次观测(prev==null, 启动时即活动)不触发
+        if (prev != false) return
         if (activationResynced) return
         activationResynced = true
         if (lastSyncedPath == currentProjectDshPath()) return
@@ -683,7 +723,9 @@ class DshToolWindowPanel(
                     wslErrorSeen = false
                     statusLabel.text = STR_RUNNING.format(settings.currentPort())
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
-                    if (jcefAvailable) {
+                    // 与看门狗同一门控 (!webUiLoaded): 已发起过加载就不再重复触发,
+                    // 避免 RUNNING 回调与看门狗并发各发起一次"同步+加载"导致页面加载两次
+                    if (jcefAvailable && !webUiLoaded) {
                         webUiLoaded = true
                         loadWebUi()
                     }
