@@ -77,6 +77,12 @@ class DshToolWindowPanel(
     private var externalBrowserOpenedForSession: Boolean = false
     private var webUiLoaded: Boolean = false
 
+    /**
+     * dsh 文件同步监听: 监听 dsh 会话事件流, 写入类工具成功执行后把文件同步到 IDEA
+     * (VFS 刷新 + 重载打开的编辑器)。仅在设置开启时创建; dsh 运行时连接, 停止/销毁时断开。
+     */
+    private var editorSync: DshEditorSync? = null
+
     /** 单飞标记: 一次"同步+加载"进行中时, 忽略并发的重复加载请求 (见 [loadWebUi]) */
     private val loadInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -154,6 +160,14 @@ class DshToolWindowPanel(
             DshServer.removeStateListener(stateListener)
         })
 
+        // 文件同步监听: 必须在注册状态监听**之前**创建 —— addStateListener 会立即用当前
+        // 状态回调一次, 若 dsh 已在运行 (打开面板时最常见的场景), 那次回调就要能启动连接,
+        // 否则监听永远不会启动
+        if (settings.syncEditedFiles) {
+            val sync = DshEditorSync(project, settings.currentPort(), settings.launchMode, ::appendLog)
+            editorSync = sync
+            DshDisposer.register(parentDisposable, com.intellij.openapi.Disposable { sync.stop() })
+        }
         // 注册状态监听: 立即以当前状态回调一次 (dsh 可能已在其他窗口启动), 后续所有窗口的
         // 启停状态变化都会广播到这里, 保证每个窗口的状态文字/按钮始终一致
         DshServer.addStateListener(stateListener)
@@ -723,6 +737,8 @@ class DshToolWindowPanel(
                     wslErrorSeen = false
                     statusLabel.text = STR_RUNNING.format(settings.currentPort())
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
+                    // dsh 就绪: 启动文件同步监听 (dsh 编辑文件后自动刷新 IDEA 编辑器)
+                    editorSync?.start()
                     // 与看门狗同一门控 (!webUiLoaded): 已发起过加载就不再重复触发,
                     // 避免 RUNNING 回调与看门狗并发各发起一次"同步+加载"导致页面加载两次
                     if (jcefAvailable && !webUiLoaded) {
@@ -748,6 +764,7 @@ class DshToolWindowPanel(
                     startRequestedByThisPanel = false
                     statusLabel.text = STR_STOPPING
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
+                    editorSync?.stop()
                 }
                 DshServer.State.IDLE -> {
                     val failed = startRequestedByThisPanel
@@ -761,6 +778,8 @@ class DshToolWindowPanel(
                     webUiLoaded = false
                     // 页面视为过期 (可能还停留在旧 WebUI / 已失效页面), 重启后需重新加载再注入
                     pageLoaded = false
+                    // dsh 已停止: 断开文件同步监听 (重启后 RUNNING 会重新连接)
+                    editorSync?.stop()
                     // 激活恢复标记复位。不在此清空 lastSyncedPath: dsh 页面在服务重启后会自动重连
                     // 自愈 (客户端连接循环指数退避重连), 切回本窗口时若工作空间已是本项目就不再整页刷新
                     activationResynced = false

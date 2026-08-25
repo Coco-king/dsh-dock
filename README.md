@@ -19,6 +19,9 @@
    software intercepts it, please allow it
 7. **Compatibility**: Compatible with IntelliJ IDEA 2022.3 and later
 8. **Open source**: <https://gitee.com/kkcoco/dsh-idea-plugin>
+9. **Auto-refresh after dsh edits**: Listens to dsh's session event stream; when a file-writing
+   tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
+   editors update to the new content immediately — no more stale code or reopening files
 
 **中文**
 
@@ -34,6 +37,8 @@
 6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
 7. **兼容版本**：兼容 IntelliJ IDEA 2022.3 及之后的所有版本
 8. **项目开源**：<https://gitee.com/kkcoco/dsh-idea-plugin>
+9. **dsh 编辑后自动刷新**：监听 dsh 会话事件流，文件写入工具（Edit / write 等）成功执行后
+   自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
 <!-- Plugin description end -->
 
 ## 开源地址
@@ -64,6 +69,9 @@
   多个窗口同时打开插件页时，工作空间跟随当前**活动窗口**：后台窗口不刷新页面、不抢占，
   切换到某窗口时若工作空间已是自己的项目则不打扰（dsh 页面会自动重连自愈），必要时才切回
 - **主题/语言**：WebUI 主题跟随 IDE（暗色 IDE 自动深色）；语言可选跟随 IDE/浏览器、简体中文或 English
+- **dsh 编辑后自动刷新**：dsh 的文件写入类工具（Edit / str_replace_editor / write 等）成功执行完时，
+  自动刷新对应文件的 VFS 并把已打开的编辑器立即更新为新代码（WSL 模式下 Windows 侧收不到文件变更
+  通知的老问题也一并解决）；有未保存修改的文件不会被覆盖；默认开启，可在设置中关闭
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
 - **宽版本支持**：支持 IntelliJ IDEA 2022.3 (223) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE
@@ -126,6 +134,7 @@
 | Windows 附加参数 | Windows 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 | 自动启动 | 打开工具窗口时自动启动 dsh | 开启 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
+| 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（监听 dsh 事件流，工具成功执行后触发） | 开启 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
 | WebUI 语言 | 单选：跟随 IDE 语言 / 简体中文 / English（JCEF 默认 en-US，跟随模式下按 IDE 语言自动注入中文） | 跟随 |
 
@@ -166,6 +175,13 @@
 - **右键发送引用**：`@路径` 引用由注入脚本写入 WebUI 输入框——dsh 输入框是 React 受控
   组件，直接改 `value` 会被覆盖，因此用原生 `value` setter + 派发 `input` 事件更新草稿；
   页面未就绪时引用先暂存，主框架 `onLoadEnd` 后自动补发
+- **dsh 编辑后自动刷新**：WSL 模式（或其他外部进程）写文件时，Windows 侧的文件变更通知
+  （IDEA 原生文件监听依赖它）经常不触发，导致 IDEA 一直显示旧代码。插件监听 dsh 会话
+  事件流 `GET /api/events.mux`（新版 dsh 为 WebSocket、旧版为 SSE，自动降级）：在
+  `tool/call` 事件中登记文件写入类工具（str_replace_editor / edit / write 等）的调用与
+  文件路径，`tool/result` 事件确认工具**成功**（非错误）后把路径换算回 Windows 侧
+  （`/mnt/c/...` -> `C:/...`），定向刷新该文件的 VFS 并重载编辑器中无未保存修改的文档；
+  失败的工具调用不刷新；事件流不可用（旧版 dsh）时只记一行日志，不影响 WebUI 正常使用
 - **只停自己启动的 dsh**：WSL 模式启动时把 dsh 的真实 PID 写入标识文件（`dsh-owner-*.pid`），
   停止/退出清理时 `kill` 该 PID；Windows 模式 `taskkill` 本插件持有的进程树。
   **外部启动的同端口 dsh（如手动 `ldsh.cmd`）绝不会被误杀**
@@ -192,6 +208,10 @@
   通过 `\\wsl$\<distro>\...` 打开的项目会转换为对应的 WSL 路径
 - **右键发送后输入框没有出现引用**：确认 JCEF 内嵌浏览器可用（工具窗口中间显示的是 WebUI 页面）；
   若 WebUI 尚未加载完成，引用会等页面就绪后自动补发；仍不行就刷新一次 WebUI 再试
+- **dsh 编辑文件后 IDEA 没有自动更新**：确认 `Settings -> Other Settings -> Dsh Dock` 中
+  「dsh 编辑文件后自动刷新编辑器」已开启，且工具窗口日志出现过「文件同步监听已连接」；
+  若 dsh 版本过旧不支持事件流，插件会静默降级（日志会提示），可手动 `Ctrl+Alt+Y` 同步
+  或重新打开文件；另外，文件在 IDEA 里有**未保存修改**时不会被自动覆盖（这是防丢改动的保护）
 
 ## 国内镜像加速
 

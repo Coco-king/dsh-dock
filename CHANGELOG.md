@@ -1,5 +1,28 @@
 # Changelog / 变更日志
 
+## [1.1.0] - 2026-08-25
+
+### 中文 (Chinese)
+
+- **新增（Added）**：dsh 编辑文件后 IDEA 自动刷新——通过监听 dsh 会话事件流
+  （`/api/events.mux`，新版 dsh 走 WebSocket、旧版走 SSE 自动降级），当 dsh 的
+  文件写入类工具（Edit / str_replace_editor / write 等）**成功执行完**时，自动刷新
+  该文件的 VFS 并把已打开的编辑器立即更新为新代码（重开文件不再需要）；
+  有未保存修改的文件不会被覆盖，刷新失败时静默降级、不影响 WebUI 正常使用
+- **新增（Added）**：设置页新增「dsh 编辑文件后自动刷新编辑器」开关（默认开启），
+  不需要时可在 `Settings -> Other Settings -> Dsh Dock` 关闭
+
+### English
+
+- **Added**: IDEA now refreshes automatically after dsh edits files. The plugin listens to
+  dsh's session event stream (`/api/events.mux` — WebSocket on newer dsh builds, SSE fallback
+  on older ones) and, once a file-writing tool call (**Edit / str_replace_editor / write**, etc.)
+  **completes successfully**, refreshes that file's VFS and instantly updates any open editors
+  to the new content (no more reopening files); files with unsaved local modifications are
+  never overwritten, and failures degrade silently without affecting the WebUI
+- **Added**: New "Auto-refresh editors after dsh edits files" toggle in Settings
+  (`Settings -> Other Settings -> Dsh Dock`), enabled by default
+
 ## [1.0.2] - 2026-08-24
 
 ### 中文 (Chinese)
