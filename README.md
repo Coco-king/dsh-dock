@@ -1,6 +1,9 @@
 # Dsh Dock - DeepSeek Harness IDEA 插件
 
 <!-- Plugin description -->
+DeepSeek Harness (dsh) for IntelliJ IDEA: launch the `dsh web` AI assistant with one click and
+chat with DeepSeek models in the built-in WebUI — no terminal or separate browser needed.
+
 **English**
 
 1. **One-click start of dsh**: Click the whale icon in the right tool window bar to open the Dsh Dock
@@ -21,6 +24,9 @@
 8. **Open source**: <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
+
+DeepSeek Harness（dsh）IntelliJ IDEA 插件：一键启动 `dsh web` AI 助手，在 IDEA 内置浏览器中直接与
+DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
    WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
