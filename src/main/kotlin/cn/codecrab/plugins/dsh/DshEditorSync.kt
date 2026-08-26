@@ -267,10 +267,9 @@ class DshEditorSync(
         onLog(message)
     }
 
-    /** 调试日志: 同时写到 IDE 日志 (idea.log) 与工具窗口日志面板, 出问题时便于整体贴出排查 */
+    /** 调试日志: 只写 IDE 日志 (idea.log, 带 [同步] 前缀可 grep), 不刷工具窗口日志面板 */
     private fun debugLog(message: String) {
         LOG.info(message)
-        onLog("[同步] $message")
     }
 
     /** 解析一帧 server-request JSON, 识别文件写入工具的调用/结果 */
