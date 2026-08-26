@@ -38,6 +38,9 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     /** WebUI 就绪后同时用系统浏览器打开 */
     var openExternalBrowser: Boolean = false
 
+    /** dsh 文件写入工具执行成功后, 自动刷新 IDEA 的 VFS 与已打开的编辑器 */
+    var syncEditedFiles: Boolean = true
+
     /** dsh WebUI 主题跟随 IDE (暗色 IDE 时强制 WebUI 深色) */
     var themeFollowIde: Boolean = true
 
@@ -66,6 +69,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
         windowsExtraDshArgs = state.windowsExtraDshArgs
         autoStart = state.autoStart
         openExternalBrowser = state.openExternalBrowser
+        syncEditedFiles = state.syncEditedFiles
         themeFollowIde = state.themeFollowIde
         forceLocale = state.forceLocale
     }

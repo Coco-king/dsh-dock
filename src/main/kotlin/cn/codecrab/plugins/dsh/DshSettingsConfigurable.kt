@@ -30,6 +30,7 @@ class DshSettingsConfigurable : Configurable {
 
     private var autoStartField: JCheckBox? = null
     private var openExternalField: JCheckBox? = null
+    private var syncEditedFilesField: JCheckBox? = null
     private var themeFollowField: JCheckBox? = null
     private var launchWslField: JRadioButton? = null
     private var launchWindowsField: JRadioButton? = null
@@ -61,6 +62,7 @@ class DshSettingsConfigurable : Configurable {
 
         autoStartField = JCheckBox("打开工具窗口时自动启动 dsh")
         openExternalField = JCheckBox("WebUI 就绪后同时用系统浏览器打开")
+        syncEditedFilesField = JCheckBox("dsh 编辑文件后自动刷新编辑器 (监听 dsh 文件写入并同步到 IDEA)")
         themeFollowField = JCheckBox("WebUI 主题跟随 IDE (暗色 IDE 使用深色 WebUI)")
 
         launchWslField = JRadioButton("在 WSL 中启动 (Windows + WSL 环境)")
@@ -89,6 +91,7 @@ class DshSettingsConfigurable : Configurable {
         var y = 0
         y = fullWidth(y, autoStartField!!)
         y = fullWidth(y, openExternalField!!)
+        y = fullWidth(y, syncEditedFilesField!!)
         y = fullWidth(y, themeFollowField!!)
         y = fullWidth(y, TitledSeparator("启动方式"))
         y = fullWidth(y, modePanel(launchWslField!!, wslPortField!!, wslExtraArgsField!!))
@@ -144,6 +147,7 @@ class DshSettingsConfigurable : Configurable {
         val s = settings
         return autoStartField?.isSelected != s.autoStart ||
             openExternalField?.isSelected != s.openExternalBrowser ||
+            syncEditedFilesField?.isSelected != s.syncEditedFiles ||
             themeFollowField?.isSelected != s.themeFollowIde ||
             wslPortField?.text?.toIntOrNull() != s.wslPort ||
             wslExtraArgsField?.text?.trim() != s.wslExtraDshArgs ||
@@ -157,6 +161,7 @@ class DshSettingsConfigurable : Configurable {
         val s = settings
         s.autoStart = autoStartField?.isSelected ?: s.autoStart
         s.openExternalBrowser = openExternalField?.isSelected ?: s.openExternalBrowser
+        s.syncEditedFiles = syncEditedFilesField?.isSelected ?: s.syncEditedFiles
         s.themeFollowIde = themeFollowField?.isSelected ?: s.themeFollowIde
         s.wslPort = wslPortField?.text?.toIntOrNull() ?: s.wslPort
         s.windowsPort = windowsPortField?.text?.toIntOrNull() ?: s.windowsPort
@@ -179,6 +184,7 @@ class DshSettingsConfigurable : Configurable {
         val s = settings
         autoStartField?.isSelected = s.autoStart
         openExternalField?.isSelected = s.openExternalBrowser
+        syncEditedFilesField?.isSelected = s.syncEditedFiles
         themeFollowField?.isSelected = s.themeFollowIde
         wslPortField?.text = s.wslPort.toString()
         wslExtraArgsField?.text = s.wslExtraDshArgs
@@ -202,6 +208,7 @@ class DshSettingsConfigurable : Configurable {
     override fun disposeUIResources() {
         autoStartField = null
         openExternalField = null
+        syncEditedFilesField = null
         themeFollowField = null
         launchWslField = null
         launchWindowsField = null

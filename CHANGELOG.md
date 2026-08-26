@@ -1,5 +1,22 @@
 # Changelog / 变更日志
 
+## [1.1.0] - 2026-08-26
+
+### 中文 (Chinese)
+
+- **新增（Added）**：dsh 编辑完文件后，IDEA 里打开着的编辑器会自动更新为新内容，
+  不用再重新打开文件（此前 WSL 模式下会一直显示旧代码的问题一并解决）
+- **新增（Added）**：新增「dsh 编辑文件后自动刷新编辑器」开关（默认开启），
+  可在 `Settings -> Other Settings -> Dsh Dock` 关闭；文件在 IDEA 中还有未保存的修改时不会被自动覆盖
+
+### English
+
+- **Added**: After dsh finishes editing a file, open editors in IDEA now update to the new
+  content automatically — no more stale code or reopening files (the WSL mode issue of the
+  IDE always showing old code is also fixed)
+- **Added**: New "Auto-refresh editors after dsh edits files" toggle (enabled by default) under
+  `Settings -> Other Settings -> Dsh Dock`; files with unsaved local changes are never overwritten
+
 ## [1.0.2] - 2026-08-24
 
 ### 中文 (Chinese)
