@@ -111,16 +111,16 @@ object DshServer {
         // 端口/附加参数按当前选中的启动方式 (WSL / Windows) 分别配置
         val port = settings.currentPort()
         if (port !in 1..65535) {
-            onLog("端口配置无效: $port (应为 1-65535), 请检查设置 (${settings.launchMode} 模式)")
+            onLog(DshBundle.message("server.log.invalidPort", port.toString(), settings.launchMode))
             return false
         }
         synchronized(lock) {
             if (state == State.STARTING || state == State.RUNNING) {
-                onLog("dsh 已在运行 (state=${state.name})")
+                onLog(DshBundle.message("server.log.alreadyRunning", state.name))
                 return false
             }
             if (WslSupport.isPortOpen(port)) {
-                onLog("端口 $port 已有服务在监听, 直接打开 WebUI (不重复启动)")
+                onLog(DshBundle.message("server.log.portInUse", port.toString()))
                 setState(State.RUNNING)
                 return false
             }
@@ -133,7 +133,7 @@ object DshServer {
                 launch(projectPath, settings.launchMode, port, settings.currentExtraArgs().trim(), onLog)
             } catch (t: Throwable) {
                 LOG.warn("launch dsh failed", t)
-                onLog("启动失败: ${t.message}")
+                onLog(DshBundle.message("server.log.startFailed", t.message ?: "null"))
                 setState(State.IDLE)
             }
         }, "dsh-plugin-launch").apply { isDaemon = true }.start()
@@ -151,14 +151,14 @@ object DshServer {
         onLog: (String) -> Unit,
     ) {
         if (!ensureStillStarting()) {
-            onLog("启动已被取消 (可能已点停止), 不再拉起 dsh")
+            onLog(DshBundle.message("server.log.startCancelled"))
             return
         }
         when (mode) {
             "windows" -> launchOnWindows(projectPath, port, extraArgs, onLog)
             else -> {
                 if (!WslSupport.isWindows) {
-                    onLog("WSL 模式仅在 Windows + WSL 环境下可用, 请到设置中改用「Windows 直接启动」")
+                    onLog(DshBundle.message("server.log.wslModeUnavailable"))
                     setState(State.IDLE)
                     return
                 }
@@ -192,7 +192,7 @@ object DshServer {
                 appendLine("if [ -d ${WslSupport.shellSingleQuote(wslProject)} ]; then")
                 appendLine("  cd ${WslSupport.shellSingleQuote(wslProject)} 2>/dev/null || cd \"\$HOME\" || exit 1")
                 appendLine("else")
-                appendLine("  echo \"[dsh] WARNING: 项目目录不存在: ${WslSupport.shellSingleQuote(wslProject)}\", 回退到 \$HOME")
+                appendLine("  echo \"${DshBundle.message("script.projectMissing", WslSupport.shellSingleQuote(wslProject))}\"")
                 appendLine("  cd \"\$HOME\" || exit 1")
                 appendLine("fi")
             } else {
@@ -211,23 +211,23 @@ object DshServer {
             // 环境检测: 无 Node.js 环境 (node/npm/npx 均不可用) 时直接失败, 不启动
             // (脚本立即退出 -> 端口不会就绪 -> 插件不会加载内置浏览器, 并弹出安装提示)
             appendLine("if ! command -v node >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then")
-            appendLine("  echo \"[dsh] ERROR: 未检测到 Node.js 环境 (node / npm / npx 均不可用), 无法启动 dsh web\"")
-            appendLine("  echo \"[dsh] 请先在 WSL 安装 Node.js (建议使用 nvm): curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash\"")
+            appendLine("  echo \"${DshBundle.message("script.noNodeEnv")}\"")
+            appendLine("  echo \"${DshBundle.message("script.nodeInstallWsl")}\"")
             appendLine("  exit 1")
             appendLine("fi")
             // 优先使用全局安装的 dsh; 未安装时兼容官方启动命令 npx @deepseek-ai/dsh web (首次运行自动下载)
             appendLine("if command -v dsh >/dev/null 2>&1; then")
             appendLine("  DSH_RUN=(dsh)")
-            appendLine("  echo \"[dsh] 使用全局安装的 dsh: \$(command -v dsh)\"")
+            appendLine("  echo \"${DshBundle.message("script.globalDshFound")}\"")
             appendLine("elif command -v npx >/dev/null 2>&1; then")
             appendLine("  DSH_RUN=(npx --yes @deepseek-ai/dsh)")
-            appendLine("  echo \"[dsh] 未检测到全局 dsh, 使用官方启动命令: npx @deepseek-ai/dsh web (首次运行会自动下载)\"")
+            appendLine("  echo \"${DshBundle.message("script.npxFallback")}\"")
             appendLine("else")
-            appendLine("  echo \"[dsh] ERROR: 找不到 dsh 命令且没有 npx 可用, 请先安装 @deepseek-ai/dsh\"")
-            appendLine("  echo \"[dsh] 安装命令: npm i -g @deepseek-ai/dsh   (nvm 环境: nvm use default && npm i -g @deepseek-ai/dsh)\"")
+            appendLine("  echo \"${DshBundle.message("script.dshMissing")}\"")
+            appendLine("  echo \"${DshBundle.message("script.installCommandWsl")}\"")
             appendLine("  exit 1")
             appendLine("fi")
-            appendLine("echo \"[dsh] starting dsh web  (project: ${wslProject ?: "\$HOME"}, port: $port)\"")
+            appendLine("echo \"${DshBundle.message("script.startingWeb", wslProject ?: "\$HOME", port.toString())}\"")
             // 后台运行并记录 PID: 全局 dsh 记录真实 PID 精确停止; npx 模式用 setsid 独立会话,
             // PID 文件写入 "-<pid>" 表示按进程组停止 (npx 内部还会派生 node/dsh 子进程)
             // --no-open: dsh web 自 v0.1.0-rc.8 起默认会用系统浏览器打开 UI (与插件内嵌浏览器冲突),
@@ -262,7 +262,7 @@ object DshServer {
             appendLine("exit \$RC")
         }
         WslSupport.writeTextFile(shFile, shContent)
-        onLog("WSL 模式: 已生成启动脚本 ${shFile.name}")
+        onLog(DshBundle.message("server.log.scriptGenerated", shFile.name))
 
         val cmdFile = WslSupport.createTempFile("dsh-run-wsl-", ".cmd")
         // bash -lic: 登录 + 交互, 完整加载用户 shell 配置 (nvm 依赖交互式初始化)
@@ -271,7 +271,7 @@ object DshServer {
             "@echo off\r\nsetlocal\r\nwsl.exe bash -lic \"bash ${WslSupport.shellSingleQuote(shWslPath)}\"\r\n",
             crlf = true
         )
-        onLog("wsl 工作目录: ${wslProject ?: "(WSL HOME)"}  (项目空间默认使用当前项目根路径)")
+        onLog(DshBundle.message("server.log.wslWorkdir", wslProject ?: DshBundle.message("server.param.wslHome")))
         startWrapper(cmdFile, onLog, port, "wsl")
     }
 
@@ -295,29 +295,29 @@ object DshServer {
                 if (cwd != null) appendLine("cd ${WslSupport.shellSingleQuote(cwd)} 2>/dev/null || exit 1")
                 // 环境检测: 无 Node.js 环境时直接失败, 由插件提示安装
                 appendLine("if ! command -v node >/dev/null 2>&1 && ! command -v npx >/dev/null 2>&1; then")
-                appendLine("  echo \"[dsh] ERROR: 未检测到 Node.js 环境 (node / npm / npx 均不可用), 无法启动 dsh web\"")
-                appendLine("  echo \"[dsh] 请先安装 Node.js: https://nodejs.org/\"")
+                appendLine("  echo \"${DshBundle.message("script.noNodeEnv")}\"")
+                appendLine("  echo \"${DshBundle.message("script.nodeInstallPosix")}\"")
                 appendLine("  exit 1")
                 appendLine("fi")
                 // 优先全局 dsh; 未安装时兼容官方启动命令 npx @deepseek-ai/dsh web
                 appendLine("if command -v dsh >/dev/null 2>&1; then")
                 if (extra.isNotEmpty()) appendLine("  exec dsh web --port $port$noOpen $extra") else appendLine("  exec dsh web --port $port$noOpen")
                 appendLine("elif command -v npx >/dev/null 2>&1; then")
-                appendLine("  echo \"[dsh] 未检测到全局 dsh, 使用官方启动命令: npx @deepseek-ai/dsh web (首次运行会自动下载)\"")
+                appendLine("  echo \"${DshBundle.message("script.npxFallback")}\"")
                 if (extra.isNotEmpty()) {
                     appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port$noOpen $extra")
                 } else {
                     appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port$noOpen")
                 }
                 appendLine("else")
-                appendLine("  echo \"[dsh] ERROR: 找不到 dsh 命令且没有 npx 可用, 请先安装 @deepseek-ai/dsh\"")
-                appendLine("  echo \"[dsh] 安装命令: npm i -g @deepseek-ai/dsh\"")
+                appendLine("  echo \"${DshBundle.message("script.dshMissing")}\"")
+                appendLine("  echo \"${DshBundle.message("script.installCommandPlain")}\"")
                 appendLine("  exit 1")
                 appendLine("fi")
             }
             WslSupport.writeTextFile(shFile, content)
             if (!ensureStillStarting()) {
-                onLog("启动已被取消 (可能已点停止), 不启动 dsh")
+                onLog(DshBundle.message("server.log.startCancelled"))
                 return
             }
             val p = ProcessBuilder("bash", shFile.absolutePath).start()
@@ -358,11 +358,11 @@ object DshServer {
             appendLine("if not errorlevel 1 goto :dsh_ok")
             appendLine("where npx >nul 2>&1")
             appendLine("if not errorlevel 1 goto :npx_ok")
-            appendLine("echo [dsh] ERROR: dsh not found and no Node.js environment - node, npm and npx not found, cannot start dsh web")
-            appendLine("echo [dsh] install Node.js first: https://nodejs.org/  then run: npm i -g @deepseek-ai/dsh")
+            appendLine("echo ${DshBundle.message("script.cmdErrNoNode")}")
+            appendLine("echo ${DshBundle.message("script.cmdInstallHint")}")
             appendLine("exit /b 1")
             appendLine(":npx_ok")
-            appendLine("echo [dsh] no global dsh found, using official command: npx @deepseek-ai/dsh web - auto-download on first run")
+            appendLine("echo ${DshBundle.message("script.cmdNpxFallback")}")
             appendLine("npx --yes @deepseek-ai/dsh web --port $port$noOpen${if (extra.isNotEmpty()) " $extra" else ""}")
             appendLine("exit /b %ERRORLEVEL%")
             appendLine(":dsh_ok")
@@ -373,8 +373,14 @@ object DshServer {
             }
         }
         WslSupport.writeTextFile(cmdFile, content, crlf = true)
-        onLog("Windows 模式: 已生成启动命令 ${cmdFile.name}")
-        onLog("工作目录: ${if (projectPath != null && File(projectPath).isDirectory) projectPath else "(缺省)"}  (项目空间默认使用当前项目根路径)")
+        onLog(DshBundle.message("server.log.cmdGenerated", cmdFile.name))
+        onLog(
+            DshBundle.message(
+                "server.log.workdir",
+                if (projectPath != null && File(projectPath).isDirectory) projectPath
+                else DshBundle.message("server.param.default")
+            )
+        )
         startWrapper(cmdFile, onLog, port, "windows")
     }
 
@@ -388,9 +394,9 @@ object DshServer {
             // 同样把 PowerShell 自身的输出 (如本地化错误消息) 统一为 UTF-8, 避免乱码
             "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & '${cmdFile.absolutePath}'",
         )
-        onLog("启动命令: powershell.exe -WindowStyle Hidden -> ${cmdFile.name}")
+        onLog(DshBundle.message("server.log.startCommand", cmdFile.name))
         if (!ensureStillStarting()) {
-            onLog("启动已被取消 (可能已点停止), 不启动 dsh")
+            onLog(DshBundle.message("server.log.startCancelled"))
             return
         }
         val p = ProcessBuilder(launchCmd).start()
@@ -420,20 +426,20 @@ object DshServer {
             }
         } catch (t: Throwable) {
             LOG.warn("probe dsh version failed", t)
-            onLog("探测 dsh 版本失败, 不追加 --no-open: ${t.message}")
+            onLog(DshBundle.message("server.log.probeFailedNoNoOpen", t.message ?: "null"))
             return false
         }
         return when {
             version == null -> {
-                onLog("未检测到全局 dsh, 按 npx 最新版 (>= 0.1.0-rc.8) 处理, 启动 dsh 时附加 --no-open")
+                onLog(DshBundle.message("server.log.noGlobalDshNpx"))
                 true
             }
             isNoOpenSupportedVersion(version) -> {
-                onLog("dsh $version 支持 --no-open, 启动 dsh 时不打开系统浏览器")
+                onLog(DshBundle.message("server.log.supportsNoOpen", version))
                 true
             }
             else -> {
-                onLog("dsh $version 不支持 --no-open (需 0.1.0-rc.8 及以上), 保持 dsh 默认行为")
+                onLog(DshBundle.message("server.log.noNoOpenSupport", version))
                 false
             }
         }
@@ -554,7 +560,7 @@ object DshServer {
             }, "dsh-plugin-version-probe-reader").apply { isDaemon = true }
             reader.start()
             if (!p.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)) {
-                onLog("探测 dsh 版本超时 ($timeoutSec s), 不追加 --no-open")
+                onLog(DshBundle.message("server.log.probeTimeout", timeoutSec.toString()))
                 p.destroy()
                 null
             } else {
@@ -566,7 +572,7 @@ object DshServer {
                 lastLine.get()
             }
         } catch (t: Throwable) {
-            onLog("探测 dsh 版本失败: ${t.message}")
+            onLog(DshBundle.message("server.log.probeFailed", t.message ?: "null"))
             null
         } finally {
             try {
@@ -602,9 +608,9 @@ object DshServer {
                 LOG.info("dsh launcher exited with code $code")
                 if (state == State.STARTING || state == State.RUNNING) {
                     if (WslSupport.isPortOpen(port)) {
-                        onLog("启动包装进程已退出(exit=$code), 但端口 $port 仍在监听, 保持连接")
+                        onLog(DshBundle.message("server.log.wrapperExitedPortAlive", code.toString(), port.toString()))
                     } else {
-                        onLog("dsh 进程已退出 (exit=$code)")
+                        onLog(DshBundle.message("server.log.dshExited", code.toString()))
                         synchronized(lock) {
                             if (state == State.STARTING || state == State.RUNNING) setState(State.IDLE)
                         }
@@ -631,11 +637,11 @@ object DshServer {
                     if (state == State.STOPPING) return
                     setState(State.RUNNING)
                 }
-                onLog("WebUI 就绪: ${webUrl(port)}")
+                onLog(DshBundle.message("server.log.webuiReady", webUrl(port)))
                 return
             }
             if (!p.isAlive) {
-                onLog("启动进程已退出, 端口 $port 未就绪, 请查看上方日志排查")
+                onLog(DshBundle.message("server.log.exitPortNotReady", port.toString()))
                 synchronized(lock) {
                     if (state == State.STARTING) setState(State.IDLE)
                 }
@@ -647,7 +653,7 @@ object DshServer {
                 return
             }
         }
-        onLog("等待 $port 端口就绪超时 (120s), dsh 可能未启动成功")
+        onLog(DshBundle.message("server.log.readyTimeout", port.toString()))
         synchronized(lock) {
             if (state == State.STARTING) setState(State.IDLE)
         }
@@ -662,7 +668,7 @@ object DshServer {
     fun stop(onLog: (String) -> Unit) {
         synchronized(lock) {
             if (state == State.IDLE || state == State.STOPPING) {
-                onLog("当前没有运行中的 dsh (state=${state.name})")
+                onLog(DshBundle.message("server.log.noRunningDsh", state.name))
                 return
             }
             setState(State.STOPPING)
@@ -672,20 +678,20 @@ object DshServer {
                     when {
                         stopPath == null && process == null -> {
                             // 端口上的服务不是本插件启动的 (例如外部 ldsh.cmd 已占用), 不越界停止
-                            onLog("该端口的 dsh 不是由本插件启动, 不执行停止 (如需停止请自行处理)")
+                            onLog(DshBundle.message("server.log.externalNotStopped"))
                         }
                         stopPath != null -> {
                             runStopScript(stopPath, onLog)
                             Thread.sleep(500)
-                            onLog("已发送停止信号 (仅本插件启动的 dsh)")
+                            onLog(DshBundle.message("server.log.stopSignalSent"))
                         }
                         else -> {
-                            onLog("无停止脚本, 尝试直接销毁包装进程")
+                            onLog(DshBundle.message("server.log.noStopScript"))
                         }
                     }
                 } catch (t: Throwable) {
                     LOG.warn("stop dsh failed", t)
-                    onLog("停止过程出错: ${t.message}")
+                    onLog(DshBundle.message("server.log.stopError", t.message ?: "null"))
                 } finally {
                     try {
                         process?.destroy()
@@ -725,7 +731,7 @@ object DshServer {
                     "  esac\n" +
                     "fi\n"
             } else {
-                "# 无本插件启动的 dsh 进程标识, 不做任何停止\n"
+                DshBundle.message("script.stopNoOwner") + "\n"
             }
             WslSupport.writeTextFile(stopSh, body)
             val cmd = WslSupport.createTempFile("dsh-stop-", ".cmd")
@@ -753,7 +759,7 @@ object DshServer {
             pb.start().waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
         } catch (t: Throwable) {
             LOG.warn("run stop script failed", t)
-            onLog("停止脚本执行失败: ${t.message}")
+            onLog(DshBundle.message("server.log.stopScriptFailed", t.message ?: "null"))
         }
     }
 

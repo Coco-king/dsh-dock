@@ -28,8 +28,8 @@
         <action
             id="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
             class="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
-            text="打开 Dsh Dock"
-            description="在侧边栏打开 Dsh 工具窗口，运行 dsh web 并显示 WebUI">
+            text="action.openDshToolWindow.text"
+            description="action.openDshToolWindow.description">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
 
@@ -37,8 +37,8 @@
         <action
             id="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
             class="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
-            text="发送选中代码到 Dsh Dock"
-            description="把选中代码的 @路径#L行号 引用发送到 Dsh Dock 输入框">
+            text="action.sendSelection.text"
+            description="action.sendSelection.description">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
         </action>
 
@@ -46,8 +46,8 @@
         <action
             id="cn.codecrab.plugins.dsh.SendFileToDshAction"
             class="cn.codecrab.plugins.dsh.SendFileToDshAction"
-            text="发送文件路径到 Dsh Dock"
-            description="把文件路径引用发送到 Dsh Dock 输入框">
+            text="action.sendFile.text"
+            description="action.sendFile.description">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="first"/>
         </action>
     </actions>

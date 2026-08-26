@@ -53,12 +53,12 @@ class DshToolWindowPanel(
      */
     private val stateListener: (DshServer.State) -> Unit = ::onStateChanged
 
-    private val statusLabel = JBLabel(STR_IDLE)
-    private val startStopBtn = JButton("启动")
-    private val refreshBtn = JButton("刷新")
-    private val browserBtn = JButton("浏览器打开")
-    private val logToggle = JToggleButton("日志")
-    private val settingsBtn = JButton("设置")
+    private val statusLabel = JBLabel(DshBundle.message("panel.status.idle"))
+    private val startStopBtn = JButton(DshBundle.message("panel.btn.start"))
+    private val refreshBtn = JButton(DshBundle.message("panel.btn.refresh"))
+    private val browserBtn = JButton(DshBundle.message("panel.btn.openBrowser"))
+    private val logToggle = JToggleButton(DshBundle.message("panel.btn.log"))
+    private val settingsBtn = JButton(DshBundle.message("panel.btn.settings"))
 
     private val logArea = JTextArea().apply {
         isEditable = false
@@ -195,7 +195,7 @@ class DshToolWindowPanel(
                 val port = settings.currentPort()
                 if (DshServer.state == DshServer.State.RUNNING || WslSupport.isPortOpen(port)) {
                     webUiLoaded = true
-                    appendLog("端口 $port 已就绪, 加载 WebUI")
+                    appendLog(DshBundle.message("log.portReady", port.toString()))
                     loadWebUi()
                 }
             } else if (jcefAvailable && webUiLoaded) {
@@ -261,12 +261,12 @@ class DshToolWindowPanel(
             browser = b
             // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
             if (!DshDisposer.register(parentDisposable, b)) {
-                appendLog("警告: 未能注册 JCEF 浏览器销毁钩子, 关闭窗口时可能无法释放浏览器资源")
+                appendLog(DshBundle.message("log.browserDisposeWarn"))
             }
             browserComponent(b)
         } catch (t: Throwable) {
             jcefAvailable = false
-            appendLog("JCEF 浏览器不可用: ${t.message}")
+            appendLog(DshBundle.message("log.jcefUnavailable", t.message ?: "null"))
             createFallbackPanel()
         }
         content.add(holder, BorderLayout.CENTER)
@@ -286,9 +286,12 @@ class DshToolWindowPanel(
 
     /**
      * dsh WebUI 的主题跟随 `matchMedia("prefers-color-scheme: dark")`,
-     * 语言跟随 `navigator.languages` (JCEF 默认 en-US, 导致英文界面)。
-     * 这里在每次主框架加载开始时注入一段 JS, 让 WebUI 跟随 IDE 主题并使用中文。
-     * (是否注入由 [injectUiThemeLocaleOverride] 根据设置决定)
+     * 语言跟随 `navigator.languages`（JCEF 的该值跟随系统/浏览器语言, 不一定与 IDE 一致）。
+     *
+     * 语言控制的**主路径**不是这里: 插件在加载页面前通过 dsh 设置 API 写入持久化语言偏好
+     * (settings.locale.preference, 见 [effectiveDshLocale] / DshWorkspaceApi.syncLocalePreference)——
+     * dsh 的语言优先级是「持久化偏好 > 浏览器」, 因此页面一加载就是正确的语言。
+     * 这里注入的 JS 只作兜底 (覆盖 navigator 以防个别场景偏好未生效), 并负责主题跟随。
      */
     private fun createInjectLoadHandler(): CefLoadHandlerAdapter = object : CefLoadHandlerAdapter() {
         override fun onLoadStart(browser: CefBrowser, frame: CefFrame, transitionType: CefRequest.TransitionType) {
@@ -311,7 +314,7 @@ class DshToolWindowPanel(
     }
 
     private fun injectUiThemeLocaleOverride(browser: CefBrowser) {
-        if (!settings.themeFollowIde && settings.forceLocale.isBlank()) return
+        // 语言注入始终执行: 跟随模式下也显式指定 dsh 语言, 不依赖 JCEF 浏览器默认语言
         val dark = settings.themeFollowIde && DshToolWindowFactory.isDarkUi()
         val langs = if (settings.forceLocale.isBlank()) followIdeLanguages() else {
             val l = settings.forceLocale.trim()
@@ -321,19 +324,17 @@ class DshToolWindowPanel(
         try {
             browser.executeJavaScript(uiOverrideScript(dark, langs), "dsh://ide-renderer-override.js", 0)
         } catch (t: Throwable) {
-            appendLog("WebUI 主题/语言注入失败: ${t.message}")
+            appendLog(DshBundle.message("log.injectFailed", t.message ?: "null"))
         }
     }
 
     /**
-     * "跟随 IDE/浏览器"模式下推导 dsh 语言: JCEF 的 `navigator.languages` 默认是 en-US,
-     * 与 IDE 界面语言无关, 必须显式注入。IDE 是中文 (user.language 以 zh 开头) 时注入中文;
-     * 其他语言保持 dsh 默认 (英文)。
+     * "跟随 IDE/浏览器"模式下推导 dsh 语言 (JS 注入兜底用): 始终显式注入, 不依赖 JCEF 默认语言
+     * (JCEF 的 `navigator.languages` 跟随系统/浏览器, 英文 IDE + 中文系统时可能显示中文)。
+     * IDE 是中文 (见 [ideLanguageTag], 含简/繁) 时注入中文; 其他语言注入英文。
      */
-    private fun followIdeLanguages(): List<String> {
-        val lang = System.getProperty("user.language")?.trim()?.lowercase() ?: return emptyList()
-        return if (lang.startsWith("zh")) listOf("zh", "en") else emptyList()
-    }
+    private fun followIdeLanguages(): List<String> =
+        if (ideLanguageTag().startsWith("zh")) listOf("zh", "en") else listOf("en")
 
     private fun uiOverrideScript(dark: Boolean, langs: List<String>): String {
         val darkJs = if (dark) "true" else "false"
@@ -379,11 +380,11 @@ class DshToolWindowPanel(
         if (reference.isBlank()) return
         pendingReference = reference
         if (!jcefAvailable) {
-            appendLog("内嵌浏览器不可用, 无法自动输入引用: $reference (请在 WebUI 输入框中手动粘贴)")
+            appendLog(DshBundle.message("log.refNoEmbedded", reference))
             return
         }
         if (DshServer.state == DshServer.State.IDLE) {
-            appendLog("dsh 未启动, 将先启动再发送引用...")
+            appendLog(DshBundle.message("log.refStartDsh"))
             ensureRunning()
         }
         flushPendingReference()
@@ -405,9 +406,9 @@ class DshToolWindowPanel(
         pendingReference = null
         try {
             b.cefBrowser.executeJavaScript(buildInjectScript(ref), "dsh://ide-inject-reference.js", 0)
-            appendLog("已发送引用到 WebUI 输入框: $ref")
+            appendLog(DshBundle.message("log.refSent", ref))
         } catch (t: Throwable) {
-            appendLog("发送引用失败: ${t.message}")
+            appendLog(DshBundle.message("log.refSendFailed", t.message ?: "null"))
         }
     }
 
@@ -473,16 +474,16 @@ class DshToolWindowPanel(
         panel.isOpaque = false
 
         val tip = JBLabel(
-            "<html><center><b>无法启动内嵌浏览器 (JCEF)</b><br>" +
-                "请在 <code>Settings -&gt; Tools -&gt; Web Browsers and Preview</code> 中启用 JCEF<br>" +
-                "或使用下方的按钮在系统浏览器中打开 WebUI</center></html>"
+            "<html><center><b>${DshBundle.message("panel.fallback.title")}</b><br>" +
+                DshBundle.message("panel.fallback.message") +
+                "</center></html>"
         )
         tip.horizontalAlignment = SwingConstants.CENTER
 
         val buttons = JPanel(FlowLayout(FlowLayout.CENTER, 8, 4)).apply { isOpaque = false }
-        val openBtn = JButton("在系统浏览器中打开")
+        val openBtn = JButton(DshBundle.message("panel.fallback.openBrowser"))
         openBtn.addActionListener { openInSystemBrowser() }
-        val retryBtn = JButton("重试加载")
+        val retryBtn = JButton(DshBundle.message("panel.fallback.retry"))
         retryBtn.addActionListener { reloadWebUi() }
         buttons.add(openBtn)
         buttons.add(retryBtn)
@@ -496,7 +497,7 @@ class DshToolWindowPanel(
 
     /** 启动 dsh (供工具窗口按钮与引用注入共用) */
     fun ensureRunning() {
-        appendLog("准备启动 dsh...")
+        appendLog(DshBundle.message("log.startingDsh"))
         // 仅当真正发起启动尝试 (非"已在运行/端口被占用") 时才标记本面板, 供失败通知使用
         startRequestedByThisPanel = DshServer.start(project.basePath, ::appendLog)
     }
@@ -526,7 +527,7 @@ class DshToolWindowPanel(
         val url = DshServer.webUrl(port)
         val projectPath = project.basePath
         if (projectPath == null) {
-            appendLog("已加载: $url")
+            appendLog(DshBundle.message("log.loaded", url))
             browser?.loadURL(url)
             return
         }
@@ -534,13 +535,13 @@ class DshToolWindowPanel(
             // 后台窗口: 不刷新页面、也不推送工作空间 —— 避免 dsh 重启或其他窗口操作时,
             // 把正在显示对话的页面整个刷掉, 或把共享 dsh 的工作空间抢成别的项目。
             // 已加载页面保持原样, 窗口重新获得焦点后由 [checkActivationResync] 恢复。
-            appendLog("当前窗口非活动, 跳过页面刷新与工作空间同步")
+            appendLog(DshBundle.message("log.inactiveSkip"))
             return
         }
         // 单飞: 已有一次"同步+加载"在进行时, 忽略并发的重复请求 (RUNNING 回调/看门狗/手动刷新),
         // 避免"先加载一次、工作空间同步完又刷新一次"的体验问题
         if (!loadInFlight.compareAndSet(false, true)) return
-        appendLog("同步工作空间到当前项目: $projectPath")
+        appendLog(DshBundle.message("log.syncingWorkspace", projectPath))
         Thread({
             var loadScheduled = false
             try {
@@ -560,7 +561,7 @@ class DshToolWindowPanel(
                     }
                 }
                 if (result != null) {
-                    appendLog("工作空间已就绪: ${dshPath ?: projectPath}")
+                    appendLog(DshBundle.message("log.workspaceReady", dshPath ?: projectPath))
                     // 记录当前项目的 sessionIds, 供 onLoadStart 清除不属于本项目的持久化会话选择
                     syncSessionIds = result.sessionIds
                     workspaceSyncFailed = false
@@ -568,16 +569,22 @@ class DshToolWindowPanel(
                     // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)
                     lastSyncedPath = dshPath
                 } else {
-                    appendLog("工作空间同步不可用(不影响使用), 如需切换请在 WebUI 侧边栏手动选择")
+                    appendLog(DshBundle.message("log.workspaceSyncUnavailable"))
                     // 页面加载完成后自动刷新一次重试 (见 [autoReloadAfterSyncFailure])
                     workspaceSyncFailed = true
+                }
+                // dsh 语言跟随: 写入持久化语言偏好 (settings.locale.preference),
+                // 页面加载后即生效 (dsh 的语言优先级: 偏好 > 浏览器); 失败不阻断加载
+                val dshLocale = effectiveDshLocale()
+                if (DshWorkspaceApi.syncLocalePreference(port, dshLocale)) {
+                    appendLog(DshBundle.message("log.localeSet", dshLocale))
                 }
                 loadScheduled = true
                 SwingUtilities.invokeLater {
                     // 先释放单飞标记再发起加载 (同一 EDT 任务内不会插入新的加载请求)
                     loadInFlight.set(false)
                     if (project.isDisposed) return@invokeLater
-                    appendLog("已加载: $url")
+                    appendLog(DshBundle.message("log.loaded", url))
                     browser?.loadURL(url)
                 }
             } finally {
@@ -611,6 +618,33 @@ class DshToolWindowPanel(
         DshReference.dshPathFromString(project.basePath, settings.launchMode)
 
     /**
+     * IDE 界面语言子标签 (小写, 如 "en" / "zh")。
+     * 用平台解析 bundle 的 locale (DynamicBundle.getLocale) —— 这才是真正的 IDE 界面语言;
+     * `user.language` 系统属性只是 JVM 默认语言 (英文 IDE + 中文系统时仍是 zh), 不能用。
+     */
+    private fun ideLanguageTag(): String = try {
+        com.intellij.DynamicBundle.getLocale().language.lowercase()
+    } catch (t: Throwable) {
+        // 旧版本平台兜底: 退到 JVM 默认语言
+        java.util.Locale.getDefault().language.lowercase()
+    }
+
+    /**
+     * 推导 dsh WebUI 应使用的语言 id ("zh" / "en", dsh 仅支持这两种):
+     * 设置页强制指定 (settings.forceLocale) 优先; 跟随模式下按 IDE 界面语言
+     * (见 [ideLanguageTag], 含简/繁中文) 推导, 其余语言一律英文。
+     * 该 id 通过 dsh 的 settings.update RPC 写入持久化语言偏好。
+     */
+    private fun effectiveDshLocale(): String {
+        val forced = settings.forceLocale.trim()
+        return when {
+            forced.startsWith("zh", ignoreCase = true) -> "zh"
+            forced.equals("en", ignoreCase = true) -> "en"
+            else -> if (ideLanguageTag().startsWith("zh")) "zh" else "en"
+        }
+    }
+
+    /**
      * 激活恢复: 窗口从**非活动真正变为活动**时, 若本窗口项目尚未成功同步为共享 dsh 的工作空间
      * (页面从未加载 / 上次同步失败), 就同步一次并刷新页面把它切回自己的项目。
      * 已同步过自己项目的窗口切回时**不整页刷新** —— dsh 页面在服务重启后由客户端自动重连自愈,
@@ -634,7 +668,7 @@ class DshToolWindowPanel(
         if (activationResynced) return
         activationResynced = true
         if (lastSyncedPath == currentProjectDshPath()) return
-        appendLog("窗口已激活, 将工作空间同步到当前项目...")
+        appendLog(DshBundle.message("log.activationResync"))
         loadWebUi()
     }
 
@@ -653,7 +687,7 @@ class DshToolWindowPanel(
             val timer = javax.swing.Timer(1200, null)
             timer.addActionListener {
                 if (project.isDisposed) return@addActionListener
-                appendLog("工作空间同步未成功, 自动刷新页面重试...")
+                appendLog(DshBundle.message("log.syncFailedAutoReload"))
                 loadWebUi()
             }
             timer.isRepeats = false
@@ -687,7 +721,7 @@ class DshToolWindowPanel(
         try {
             browser.executeJavaScript(script, "dsh://ide-workspace-clear.js", 0)
         } catch (t: Throwable) {
-            appendLog("清除持久化会话选择失败(不影响使用): ${t.message}")
+            appendLog(DshBundle.message("log.clearPersistFailed", t.message ?: "null"))
         }
     }
 
@@ -695,10 +729,14 @@ class DshToolWindowPanel(
         val url = DshServer.webUrl(settings.currentPort())
         if (WslSupport.isPortOpen(settings.currentPort())) {
             desktopBrowse(url)
-            appendLog("已在系统浏览器打开: $url")
+            appendLog(DshBundle.message("log.openedExternal", url))
         } else {
-            appendLog("端口 ${settings.currentPort()} 未就绪, 请先启动 dsh")
-            Messages.showWarningDialog(project, "dsh 尚未启动, 端口 ${settings.currentPort()} 未就绪。\n请先点击「启动」。", "Dsh Dock")
+            appendLog(DshBundle.message("log.notReadyStart", settings.currentPort().toString()))
+            Messages.showWarningDialog(
+                project,
+                DshBundle.message("warn.dshNotStarted", settings.currentPort().toString()),
+                "Dsh Dock"
+            )
         }
     }
 
@@ -708,10 +746,10 @@ class DshToolWindowPanel(
             if (java.awt.Desktop.isDesktopSupported()) {
                 java.awt.Desktop.getDesktop().browse(java.net.URI(url))
             } else {
-                appendLog("无法打开系统浏览器 (Desktop API 不可用): $url")
+                appendLog(DshBundle.message("log.desktopUnavailable", url))
             }
         } catch (t: Throwable) {
-            appendLog("打开系统浏览器失败: ${t.message}")
+            appendLog(DshBundle.message("log.openBrowserFailed", t.message ?: "null"))
         }
     }
 
@@ -721,7 +759,7 @@ class DshToolWindowPanel(
         try {
             ShowSettingsUtil.getInstance().showSettingsDialog(project, DshSettingsConfigurable::class.java)
         } catch (t: Throwable) {
-            appendLog("当前 IDE 版本不支持程序化打开设置, 请通过 Settings -> Tools -> Dsh 手动配置 (${t.message})")
+            appendLog(DshBundle.message("log.openSettingsUnsupported", t.message ?: "null"))
         }
     }
 
@@ -735,7 +773,7 @@ class DshToolWindowPanel(
                     dshMissingWarned = false
                     nodeEnvMissingWarned = false
                     wslErrorSeen = false
-                    statusLabel.text = STR_RUNNING.format(settings.currentPort())
+                    statusLabel.text = DshBundle.message("panel.status.running", settings.currentPort().toString())
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
                     // dsh 就绪: 启动文件同步监听 (dsh 编辑文件后自动刷新 IDEA 编辑器)
                     editorSync?.start()
@@ -751,18 +789,18 @@ class DshToolWindowPanel(
                         externalBrowserOpenedForSession = true
                         desktopBrowse(DshServer.webUrl(settings.currentPort()))
                         if (!jcefAvailable) {
-                            appendLog("JCEF 内嵌浏览器不可用, 已自动改用系统浏览器打开 WebUI")
+                            appendLog(DshBundle.message("log.externalBrowserFallback"))
                         }
                     }
                 }
                 DshServer.State.STARTING -> {
-                    statusLabel.text = STR_STARTING
+                    statusLabel.text = DshBundle.message("panel.status.starting")
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                 }
                 DshServer.State.STOPPING -> {
                     // 用户主动停止 (含启动过程中点停止), 不算启动失败
                     startRequestedByThisPanel = false
-                    statusLabel.text = STR_STOPPING
+                    statusLabel.text = DshBundle.message("panel.status.stopping")
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                     editorSync?.stop()
                 }
@@ -772,7 +810,7 @@ class DshToolWindowPanel(
                     val nodeMissing = nodeEnvMissingWarned
                     val wslError = wslErrorSeen
                     startRequestedByThisPanel = false
-                    statusLabel.text = STR_IDLE
+                    statusLabel.text = DshBundle.message("panel.status.idle")
                     statusLabel.foreground = JBColor.GRAY
                     externalBrowserOpenedForSession = false
                     webUiLoaded = false
@@ -800,51 +838,39 @@ class DshToolWindowPanel(
         try {
             val group = NotificationGroupManager.getInstance().getNotificationGroup("Dsh")
             val content = when {
-                nodeMissing -> buildString {
-                    append("未检测到 Node.js 环境（node / npm / npx 均不可用），无法启动 dsh。\n")
-                    append(if (settings.launchMode == "wsl") {
-                        "请在 WSL 中安装 Node.js（建议使用 nvm），安装完成后重新点击「启动」。\n"
-                    } else {
-                        "请先安装 Node.js（https://nodejs.org/）并重新打开终端，然后重新点击「启动」。\n"
-                    })
-                    append("详细日志见工具窗口底部日志面板。")
+                nodeMissing -> if (settings.launchMode == "wsl") {
+                    DshBundle.message("notify.fail.nodeMissing.wsl")
+                } else {
+                    DshBundle.message("notify.fail.nodeMissing.windows")
                 }
-                missingDsh -> buildString {
-                    append("未检测到 dsh 命令, 插件会自动改用官方启动命令 npx @deepseek-ai/dsh web。\n")
-                    append(if (settings.launchMode == "wsl") {
-                        "如果 npx 也无法使用, 请在 WSL 终端执行: npm i -g @deepseek-ai/dsh"
-                    } else {
-                        "如果 npx 也无法使用, 请在 Windows 执行: npm i -g @deepseek-ai/dsh"
-                    })
-                    append("\n安装完成后请重启IDEA。详细日志见工具窗口底部日志面板。")
+                missingDsh -> if (settings.launchMode == "wsl") {
+                    DshBundle.message("notify.fail.dshMissing.wsl")
+                } else {
+                    DshBundle.message("notify.fail.dshMissing.windows")
                 }
-                wslError -> buildString {
-                    append("WSL 启动失败 (Wsl/Service/E_UNEXPECTED 等子系统错误)。\n")
-                    append("请先在 Windows 运行 wsl --shutdown 后重试;\n")
-                    append("仍失败可重启 WSL 服务 (管理员 PowerShell: net stop LxssManager && net start LxssManager)。")
-                }
-                else -> buildString {
-                    append("dsh 启动失败, 端口 ${settings.currentPort()} 未就绪。\n")
-                    if (settings.launchMode == "wsl") {
-                        append("若日志含 WSL 错误 (如 Wsl/Service/E_UNEXPECTED), 请先在 Windows 运行 wsl --shutdown 后重试;\n")
-                        append("仍失败可重启 WSL 服务 (管理员 PowerShell: net stop LxssManager && net start LxssManager)。\n")
-                    }
-                    append("详细日志见工具窗口底部日志面板。")
+                wslError -> DshBundle.message("notify.fail.wslError")
+                else -> if (settings.launchMode == "wsl") {
+                    DshBundle.message("notify.fail.generic.wsl", settings.currentPort().toString())
+                } else {
+                    DshBundle.message("notify.fail.generic.windows", settings.currentPort().toString())
                 }
             }
-            Notifications.Bus.notify(group.createNotification("Dsh 启动失败", content, NotificationType.ERROR), project)
+            Notifications.Bus.notify(
+                group.createNotification(DshBundle.message("notify.fail.title"), content, NotificationType.ERROR),
+                project
+            )
         } catch (t: Throwable) {
-            appendLog("无法弹出启动失败通知: ${t.message}")
+            appendLog(DshBundle.message("log.notifyFailed", t.message ?: "null"))
         }
     }
 
     private fun updateButtons(state: DshServer.State) {
         val busy = state == DshServer.State.STARTING || state == DshServer.State.STOPPING
         startStopBtn.text = when (state) {
-            DshServer.State.RUNNING -> "停止"
-            DshServer.State.STARTING -> "启动中..."
-            DshServer.State.STOPPING -> "停止中..."
-            DshServer.State.IDLE -> "启动"
+            DshServer.State.RUNNING -> DshBundle.message("panel.btn.stop")
+            DshServer.State.STARTING -> DshBundle.message("panel.btn.starting")
+            DshServer.State.STOPPING -> DshBundle.message("panel.btn.stopping")
+            DshServer.State.IDLE -> DshBundle.message("panel.btn.start")
         }
         startStopBtn.isEnabled = !busy || state == DshServer.State.STOPPING
         refreshBtn.isEnabled = !busy
@@ -852,7 +878,7 @@ class DshToolWindowPanel(
 
     private fun appendLog(line: String) {
         // 日志里出现"找不到 dsh"警告 -> 标记, 启动失败通知里给出对应提示
-        // (Windows .cmd 通道消息为 ASCII, 同时匹配中英文两种标记)
+        // (中英两种标记都匹配: 生成脚本里已按 IDE 语言输出对应语言的消息)
         if (line.contains("找不到 dsh") || line.contains("dsh not found")) {
             dshMissingWarned = true
         }
@@ -883,12 +909,5 @@ class DshToolWindowPanel(
             }
         } catch (_: Exception) {
         }
-    }
-
-    companion object {
-        private const val STR_IDLE = "● 未启动"
-        private const val STR_STARTING = "● 启动中..."
-        private const val STR_STOPPING = "● 停止中..."
-        private const val STR_RUNNING = "● 运行中 (端口 %d)"
     }
 }

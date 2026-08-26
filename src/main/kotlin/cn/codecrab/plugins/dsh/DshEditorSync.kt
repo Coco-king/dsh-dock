@@ -137,7 +137,7 @@ class DshEditorSync(
             if (!running.get()) return
             consecutiveFailures = if (ok) 0 else consecutiveFailures + 1
             if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-                throttledLog("当前 dsh 版本不支持文件同步监听 (events.mux 不可用), 已停止自动刷新")
+                throttledLog(DshBundle.message("sync.log.unsupported"))
                 running.set(false)
                 return
             }
@@ -176,7 +176,7 @@ class DshEditorSync(
             }
             true
         } catch (t: Throwable) {
-            if (running.get()) throttledLog("事件流连接中断: ${t.message}")
+            if (running.get()) throttledLog(DshBundle.message("sync.log.connInterrupted", t.message ?: "null"))
             false
         } finally {
             try {
@@ -240,7 +240,7 @@ class DshEditorSync(
             closed.await()
             true
         } catch (t: Throwable) {
-            if (running.get()) throttledLog("事件流连接失败: ${t.message}")
+            if (running.get()) throttledLog(DshBundle.message("sync.log.connFailed", t.message ?: "null"))
             false
         } finally {
             try {
@@ -255,7 +255,7 @@ class DshEditorSync(
         if (connectedLogged) return
         connectedLogged = true
         consecutiveFailures = 0
-        onLog("文件同步监听已连接 (dsh 编辑文件后 IDEA 自动刷新): $transport")
+        onLog(DshBundle.message("sync.log.connected", transport))
     }
 
     /** 节流日志: 同一条消息每分钟最多输出一次 (防重连风暴刷屏日志面板) */

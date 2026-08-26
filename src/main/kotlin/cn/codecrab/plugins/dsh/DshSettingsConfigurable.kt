@@ -60,19 +60,19 @@ class DshSettingsConfigurable : Configurable {
             return y + 1
         }
 
-        autoStartField = JCheckBox("打开工具窗口时自动启动 dsh")
-        openExternalField = JCheckBox("WebUI 就绪后同时用系统浏览器打开")
-        syncEditedFilesField = JCheckBox("dsh 编辑文件后自动刷新编辑器 (监听 dsh 文件写入并同步到 IDEA)")
-        themeFollowField = JCheckBox("WebUI 主题跟随 IDE (暗色 IDE 使用深色 WebUI)")
+        autoStartField = JCheckBox(DshBundle.message("settings.autoStart"))
+        openExternalField = JCheckBox(DshBundle.message("settings.openExternalBrowser"))
+        syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles"))
+        themeFollowField = JCheckBox(DshBundle.message("settings.themeFollow"))
 
-        launchWslField = JRadioButton("在 WSL 中启动 (Windows + WSL 环境)")
-        launchWindowsField = JRadioButton("在 Windows 中直接启动")
+        launchWslField = JRadioButton(DshBundle.message("settings.mode.wsl"))
+        launchWindowsField = JRadioButton(DshBundle.message("settings.mode.windows"))
         ButtonGroup().apply {
             add(launchWslField)
             add(launchWindowsField)
         }
 
-        localeFollowField = JRadioButton("跟随 IDE/浏览器")
+        localeFollowField = JRadioButton(DshBundle.message("settings.locale.follow"))
         localeZhField = JRadioButton("简体中文")
         localeEnField = JRadioButton("English")
         ButtonGroup().apply {
@@ -93,13 +93,13 @@ class DshSettingsConfigurable : Configurable {
         y = fullWidth(y, openExternalField!!)
         y = fullWidth(y, syncEditedFilesField!!)
         y = fullWidth(y, themeFollowField!!)
-        y = fullWidth(y, TitledSeparator("启动方式"))
+        y = fullWidth(y, TitledSeparator(DshBundle.message("settings.modeSeparator")))
         y = fullWidth(y, modePanel(launchWslField!!, wslPortField!!, wslExtraArgsField!!))
         y = fullWidth(y, modePanel(launchWindowsField!!, windowsPortField!!, windowsExtraArgsField!!))
-        y = fullWidth(y, TitledSeparator("WebUI 语言"))
+        y = fullWidth(y, TitledSeparator(DshBundle.message("settings.localeSeparator")))
         y = fullWidth(y, localePanel)
 
-        val hint = JBLabel("提示: 实际启动时仅使用当前选中的启动方式对应的「端口」与「附加参数」。")
+        val hint = JBLabel(DshBundle.message("settings.hint"))
         hint.foreground = JBColor.GRAY
         y = fullWidth(y, hint)
 
@@ -133,11 +133,11 @@ class DshSettingsConfigurable : Configurable {
         // 标签与输入框再缩进一层, 放在单选按钮下方
         gbc.insets = Insets(2, INDENT_RADIO + INDENT_CHILD, 2, 6)
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
-        panel.add(JLabel("端口:"), gbc)
+        panel.add(JLabel(DshBundle.message("settings.port.label")), gbc)
         gbc.gridx = 1; gbc.gridy = 1; gbc.weightx = 1.0
         panel.add(portField, gbc)
         gbc.gridx = 0; gbc.gridy = 2; gbc.weightx = 0.0
-        panel.add(JLabel("附加参数 (追加到 dsh web 后):"), gbc)
+        panel.add(JLabel(DshBundle.message("settings.extraArgs.label")), gbc)
         gbc.gridx = 1; gbc.gridy = 2; gbc.weightx = 1.0
         panel.add(argsField, gbc)
         return panel

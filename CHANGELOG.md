@@ -1,5 +1,19 @@
 # Changelog / 变更日志
 
+## [1.1.1] - 2026-08-26
+
+### 中文 (Chinese)
+
+- **新增（Added）**：插件**界面、通知与启动日志支持国际化并自动跟随 IDE 语言——中文 IDE 显示中文，英文 IDE 显示英文（简体/繁体中文 IDE 均显示简体中文）
+- **修复（Fixed）**：修复 dsh 界面语言与 IDE 不一致的问题——英文 IDE 下 dsh 也显示英文、中文 IDE 下显示中文，切换 IDE 语言后无需再手动调整
+- **修复（Fixed）**：修复工具窗口状态栏端口号带千位逗号的问题（如 3,090 → 3090）**
+
+### English
+
+- **Added**: The plugin UI, notifications and launch logs are now internationalized and follow the IDE language automatically — a Chinese IDE shows Chinese, an English IDE shows English (both Simplified and Traditional Chinese IDEs show Simplified Chinese)
+- **Fixed**: The dsh interface language is now consistent with the IDE — an English IDE shows English, a Chinese IDE shows Chinese, with no manual adjustment needed after switching the IDE language
+- **Fixed**: The tool-window status bar no longer shows a thousands separator in the port number (e.g. 3,090 → 3090)
+
 ## [1.1.0] - 2026-08-26
 
 ### 中文 (Chinese)

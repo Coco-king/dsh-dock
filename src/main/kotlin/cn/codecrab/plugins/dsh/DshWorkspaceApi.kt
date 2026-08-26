@@ -97,6 +97,30 @@ object DshWorkspaceApi {
         if (r?.ok != true) LOG.warn("workspace.archiveSession failed: ${r?.value}")
     }
 
+    /**
+     * 把 dsh WebUI 的持久化语言偏好 (settings.locale.preference) 同步为指定语言 id。
+     *
+     * 背景: dsh 界面语言的优先级是 **持久化偏好 > 浏览器 navigator.languages**
+     * (见 dsh-client-locale 的 LocaleRuntime: `section.preference ?? provisional`)。
+     * 只靠注入 JS 覆盖 navigator 不可靠 (onLoadStart 时脚本可能落进即将被替换的旧文档),
+     * 因此这里在加载页面前通过 dsh 的 /api 设置通道写入语言偏好 —— 这是 dsh 官方设计的
+     * 语言控制入口, 持久化、实时生效 (applies: live), 与 WebUI 设置页里的「语言」同一槽位。
+     *
+     * @param port     dsh 监听端口
+     * @param localeId dsh 语言 id, 仅支持 "zh" / "en" (dsh-client-locale 的 LOCALE_IDS)
+     * @return true 表示写入成功; 失败 (dsh 无设置服务/传输失败) 返回 false, 调用方按现状继续
+     */
+    fun syncLocalePreference(port: Int, localeId: String, timeoutMs: Long = 4000): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val payload = "{\"ns\":${jsonString("locale")},\"patch\":{\"preference\":${jsonString(localeId)}}}"
+        val r = rpcWithin(port, "settings.update", payload, deadline) ?: return false
+        if (!r.ok) {
+            LOG.warn("settings.update (locale) failed: ${r.value}")
+            return false
+        }
+        return true
+    }
+
     /** 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者 */
     private fun computeRecentWorkspaceId(port: Int, deadline: Long): String? {
         val ws = rpcWithin(port, "workspace.list", "{}", deadline) ?: return null
