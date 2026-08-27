@@ -53,3 +53,5 @@ logs/
 AGENTS.local.md
 AGENTS.local
 .agents.local.md
+# 本机 Agent 项目级 skill 等配置（不入库）
+.dsh/
