@@ -7,7 +7,7 @@ import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.project.DumbAware
 
 /**
- * 项目视图右键菜单: 把选中文件/目录的路径 AI 引用 (`@<path>`) 复制到剪贴板。
+ * 项目视图右键菜单: 把选中文件/目录的路径 AI 引用 (`@<path>`) 复制到剪贴板。 
  */
 class CopyFileReferenceAction : AnAction(), DumbAware {
 
