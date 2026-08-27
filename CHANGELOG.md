@@ -4,14 +4,16 @@
 
 ### 中文 (Chinese)
 
-- **新增（Added）**：插件**界面、通知与启动日志支持国际化并自动跟随 IDE 语言——中文 IDE 显示中文，英文 IDE 显示英文（简体/繁体中文 IDE 均显示简体中文）
+- **新增（Added）**：插件界面、右键菜单、通知与启动日志支持国际化并自动跟随 IDE 语言——中文 IDE 显示中文，英文 IDE 显示英文（简体/繁体中文 IDE 均显示简体中文）
+- **新增（Added）**：右键菜单新增「复制 AI 引用」——选中代码或文件后一键把 AI 引用复制到剪贴板，方便粘贴到任意支持 @引用 的输入框
 - **新增（Added）**：dsh 编辑完文件后，IDEA 里打开着的编辑器会自动更新为新内容，不用再重新打开文件（此前 WSL 模式下会一直显示旧代码的问题一并解决）；新增「dsh 编辑文件后自动刷新编辑器」开关（默认开启，可在 `Settings -> Other Settings -> Dsh Dock` 关闭），文件在 IDEA 中还有未保存的修改时不会被自动覆盖
 - **修复（Fixed）**：修复 dsh 界面语言与 IDE 不一致的问题——英文 IDE 下 dsh 也显示英文、中文 IDE 下显示中文，切换 IDE 语言后无需再手动调整
 - **修复（Fixed）**：修复工具窗口状态栏端口号带千位逗号的问题（如 3,090 → 3090）
 
 ### English
 
-- **Added**: The plugin UI, notifications and launch logs are now internationalized and follow the IDE language automatically — a Chinese IDE shows Chinese, an English IDE shows English (both Simplified and Traditional Chinese IDEs show Simplified Chinese)
+- **Added**: The plugin UI, context menus, notifications and launch logs are now internationalized and follow the IDE language automatically — a Chinese IDE shows Chinese, an English IDE shows English (both Simplified and Traditional Chinese IDEs show Simplified Chinese)
+- **Added**: New "Copy AI Reference" context-menu action — copy the AI reference of the selected code or file to the clipboard with one click, ready to paste into any @reference-aware input
 - **Added**: After dsh finishes editing a file, open editors in IDEA now update to the new content automatically — no more stale code or reopening files (the WSL mode issue of the IDE always showing old code is also fixed); a new "Auto-refresh editors after dsh edits files" toggle (enabled by default, under `Settings -> Other Settings -> Dsh Dock`) turns this off, and files with unsaved local changes are never overwritten
 - **Fixed**: The dsh interface language is now consistent with the IDE — an English IDE shows English, a Chinese IDE shows Chinese, with no manual adjustment needed after switching the IDE language
 - **Fixed**: The tool-window status bar no longer shows a thousands separator in the port number (e.g. 3,090 → 3090)

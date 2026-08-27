@@ -28,27 +28,53 @@
         <action
             id="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
             class="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
-            text="action.openDshToolWindow.text"
-            description="action.openDshToolWindow.description">
+            text="cn.codecrab.plugins.dsh.OpenDshToolWindowAction.action.text"
+            description="cn.codecrab.plugins.dsh.OpenDshToolWindowAction.action.description">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
         </action>
 
-        <!-- 编辑器右键: 发送选中代码的行范围引用到 Dsh 输入框 -->
-        <action
-            id="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
-            class="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
-            text="action.sendSelection.text"
-            description="action.sendSelection.description">
+        <!-- 编辑器右键菜单组: Dsh 相关操作集中在一组, 与其他菜单项分隔显示 -->
+        <group id="cn.codecrab.plugins.dsh.EditorContextMenuGroup" popup="false">
             <add-to-group group-id="EditorPopupMenu" anchor="first"/>
-        </action>
 
-        <!-- 项目视图右键: 发送文件路径引用到 Dsh 输入框 -->
-        <action
-            id="cn.codecrab.plugins.dsh.SendFileToDshAction"
-            class="cn.codecrab.plugins.dsh.SendFileToDshAction"
-            text="action.sendFile.text"
-            description="action.sendFile.description">
+            <!-- 编辑器右键: 发送选中代码的行范围引用到 Dsh 输入框 -->
+            <action
+                id="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
+                class="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
+                text="cn.codecrab.plugins.dsh.SendSelectionToDshAction.action.text"
+                description="cn.codecrab.plugins.dsh.SendSelectionToDshAction.action.description"/>
+
+            <!-- 编辑器右键: 复制选中代码的行范围引用到剪贴板 -->
+            <action
+                id="cn.codecrab.plugins.dsh.CopySelectionReferenceAction"
+                class="cn.codecrab.plugins.dsh.CopySelectionReferenceAction"
+                text="cn.codecrab.plugins.dsh.CopySelectionReferenceAction.action.text"
+                description="cn.codecrab.plugins.dsh.CopySelectionReferenceAction.action.description"/>
+
+            <!-- 分隔线: 与本菜单其他项隔开 -->
+            <separator/>
+        </group>
+
+        <!-- 项目视图右键菜单组: Dsh 相关操作集中在一组, 与其他菜单项分隔显示 -->
+        <group id="cn.codecrab.plugins.dsh.ProjectContextMenuGroup" popup="false">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="first"/>
-        </action>
+
+            <!-- 项目视图右键: 发送文件路径引用到 Dsh 输入框 -->
+            <action
+                id="cn.codecrab.plugins.dsh.SendFileToDshAction"
+                class="cn.codecrab.plugins.dsh.SendFileToDshAction"
+                text="cn.codecrab.plugins.dsh.SendFileToDshAction.action.text"
+                description="cn.codecrab.plugins.dsh.SendFileToDshAction.action.description"/>
+
+            <!-- 项目视图右键: 复制文件路径引用到剪贴板 -->
+            <action
+                id="cn.codecrab.plugins.dsh.CopyFileReferenceAction"
+                class="cn.codecrab.plugins.dsh.CopyFileReferenceAction"
+                text="cn.codecrab.plugins.dsh.CopyFileReferenceAction.action.text"
+                description="cn.codecrab.plugins.dsh.CopyFileReferenceAction.action.description"/>
+
+            <!-- 分隔线: 与本菜单其他项隔开 -->
+            <separator/>
+        </group>
     </actions>
 </idea-plugin>
