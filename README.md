@@ -1,8 +1,9 @@
-# Dsh Dock - DeepSeek Harness IDEA 插件
+# Dsh Dock - DeepSeek Harness JetBrains IDE 插件
 
 <!-- Plugin description -->
-DeepSeek Harness (dsh) for IntelliJ IDEA: launch the `dsh web` AI assistant with one click and
-chat with DeepSeek models in the built-in WebUI — no terminal or separate browser needed.
+DeepSeek Harness (dsh) for JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, ...): launch the
+`dsh web` AI assistant with one click and chat with DeepSeek models in the built-in WebUI —
+no terminal or separate browser needed.
 
 **English**
 
@@ -20,7 +21,7 @@ chat with DeepSeek models in the built-in WebUI — no terminal or separate brow
    reference with one click, so the assistant can read the file when needed
 6. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
-7. **Compatibility**: Compatible with IntelliJ IDEA 2022.3 and later
+7. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2022.3 and later
 8. **Open source**: <https://gitee.com/kkcoco/dsh-idea-plugin>
 9. **Auto-refresh after dsh edits**: Listens to dsh's session event stream; when a file-writing
    tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
@@ -28,7 +29,7 @@ chat with DeepSeek models in the built-in WebUI — no terminal or separate brow
 
 **中文**
 
-DeepSeek Harness（dsh）IntelliJ IDEA 插件：一键启动 `dsh web` AI 助手，在 IDEA 内置浏览器中直接与
+DeepSeek Harness（dsh）JetBrains IDE 插件（IntelliJ IDEA / PyCharm / WebStorm 等）：一键启动 `dsh web` AI 助手，在 IDE 内置浏览器中直接与
 DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
@@ -41,7 +42,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    直接在内置浏览器中打开 WebUI，不会重复启动进程
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
 6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-7. **兼容版本**：兼容 IntelliJ IDEA 2022.3 及之后的所有版本
+7. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2022.3 及之后版本
 8. **项目开源**：<https://gitee.com/kkcoco/dsh-idea-plugin>
 9. **dsh 编辑后自动刷新**：监听 dsh 会话事件流，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
@@ -64,9 +65,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
 - **已启动自动识别**：如果对应端口已被监听（比如你自己已经启动了 dsh），插件会**跳过启动步骤**，
   直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停
-- **启动时机（设置可选）**：除「打开工具窗口时自动启动」外，还可开启「IDEA 启动时自动启动 dsh」——
-  IDE 打开项目后在后台提前启动 dsh，首次打开 Dsh Dock 窗口时 WebUI 已就绪；
-  进程生命周期与 IDE 一致，IDE 退出时 dsh 一并自动停止
+- **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台预热 dsh 与内嵌浏览器页面，
+  首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止
 - **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
   `@路径` 引用直接发送到 Dsh 输入框（自动打开工具窗口、必要时自动启动 dsh）：
   - 选中代码 → `@<path>#L<start>-<end>`（如 `@/mnt/c/.../.gitignore#L5-6`）
@@ -142,8 +142,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 | WSL 附加参数 | WSL 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 | Windows 端口 | Windows 模式下 dsh web 监听端口 | `3080` |
 | Windows 附加参数 | Windows 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
-| 自动启动 | 打开工具窗口时自动启动 dsh | 开启 |
-| IDEA 启动时启动 | IDEA 启动时（本次会话首次打开项目后）自动启动 dsh，提前预热，缩短首次打开 Dsh Dock 窗口的等待时间；进程生命周期与 IDE 一致，IDE 退出时自动停止 | 关闭 |
+| 自动启动 | 启动时机：IDEA 启动时（默认，含内嵌浏览器预热）/ 打开工具窗口时 / 手动启动 | IDEA 启动时 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
 | 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（监听 dsh 事件流，工具成功执行后触发） | 开启 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
@@ -181,8 +180,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
     （`dsh.sessions.current`），页面加载时恢复它、从而跳过工作空间初始选中。插件在加载前检查：
     持久化的会话不属于当前项目工作空间时清除它（让页面落到当前项目）；属于则保留（回到原会话）
 - **防止 dsh 打开系统浏览器**：dsh 自 v0.1.0-rc.8 起 `dsh web` 默认会用系统浏览器打开 UI，
-  与插件内嵌浏览器冲突。插件启动前会探测 dsh 版本，仅在支持 `--no-open` 的版本上为 `dsh web`
-  自动附加 `--no-open`（`web --port <port> --no-open`）；不支持的旧版本会自动跳过该参数，避免启动报错
+  与插件内嵌浏览器冲突。插件为 `dsh web` 自动附加 `--no-open`（`web --port <port> --no-open`），
+  需 dsh 0.1.0-rc.8 及以上版本（更早版本不支持该参数）
 - **右键发送引用**：`@路径` 引用由注入脚本写入 WebUI 输入框——dsh 输入框是 React 受控
   组件，直接改 `value` 会被覆盖，因此用原生 `value` setter + 派发 `input` 事件更新草稿；
   页面未就绪时引用先暂存，主框架 `onLoadEnd` 后自动补发

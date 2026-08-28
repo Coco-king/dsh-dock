@@ -1,16 +1,22 @@
 package cn.codecrab.plugins.dsh.toolwindow
 
+import cn.codecrab.plugins.dsh.DshBundle
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader
 import com.intellij.openapi.util.ScalableIcon
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.components.JBLabel
 import java.awt.Component
 import java.awt.Graphics
 import java.awt.Image
 import java.awt.image.BufferedImage
+import javax.swing.BorderFactory
 import javax.swing.Icon
 import javax.swing.ImageIcon
+import javax.swing.JComponent
+import javax.swing.SwingConstants
 import javax.swing.UIManager
 
 /**
@@ -35,8 +41,19 @@ class DshToolWindowFactory : ToolWindowFactory {
     }
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = DshToolWindowPanel(project, toolWindow.disposable)
-        DshToolWindowRegistry.register(project, panel)
+        val panel: JComponent = try {
+            DshToolWindowPanel(project, toolWindow.disposable)
+        } catch (t: Throwable) {
+            // 面板创建失败绝不能留空窗口 (平台会一直显示"没有要显示的内容"): 兜底展示错误信息
+            Logger.getInstance(DshToolWindowFactory::class.java).warn("Failed to create the Dsh Dock panel", t)
+            JBLabel(DshBundle.message("panel.createFailed", t.message ?: "null")).apply {
+                horizontalAlignment = SwingConstants.CENTER
+                border = BorderFactory.createEmptyBorder(16, 16, 16, 16)
+            }
+        }
+        if (panel is DshToolWindowPanel) {
+            DshToolWindowRegistry.register(project, panel)
+        }
         toolWindow.component.add(panel)
         // 标签页显示名也同步 (部分 IDE 版本标签/tooltip 取自 content display name)
         try {

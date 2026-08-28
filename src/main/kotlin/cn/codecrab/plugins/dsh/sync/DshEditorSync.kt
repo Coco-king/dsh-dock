@@ -2,6 +2,7 @@ package cn.codecrab.plugins.dsh.sync
 
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.util.DshIdeName
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.application.ApplicationManager
@@ -257,7 +258,7 @@ class DshEditorSync(
         if (connectedLogged) return
         connectedLogged = true
         consecutiveFailures = 0
-        onLog(DshBundle.message("sync.log.connected", transport))
+        onLog(DshBundle.message("sync.log.connected", DshIdeName.productName(), transport))
     }
 
     /** 节流日志: 同一条消息每分钟最多输出一次 (防重连风暴刷屏日志面板) */

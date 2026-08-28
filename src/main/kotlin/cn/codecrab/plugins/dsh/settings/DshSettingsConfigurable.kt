@@ -1,6 +1,8 @@
 package cn.codecrab.plugins.dsh.settings
 
 import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.util.DshIdeName
+import com.intellij.icons.AllIcons
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.ui.JBColor
@@ -29,8 +31,9 @@ class DshSettingsConfigurable : Configurable {
 
     private val settings = DshSettingsState.getInstance()
 
-    private var autoStartField: JCheckBox? = null
-    private var startOnIdeStartupField: JCheckBox? = null
+    private var startIdeField: JRadioButton? = null
+    private var startToolWindowField: JRadioButton? = null
+    private var startManualField: JRadioButton? = null
     private var openExternalField: JCheckBox? = null
     private var syncEditedFilesField: JCheckBox? = null
     private var themeFollowField: JCheckBox? = null
@@ -62,11 +65,19 @@ class DshSettingsConfigurable : Configurable {
             return y + 1
         }
 
-        autoStartField = JCheckBox(DshBundle.message("settings.autoStart"))
-        startOnIdeStartupField = JCheckBox(DshBundle.message("settings.startOnIdeStartup"))
+        // 产品名动态获取: 插件可装在 IDEA / PyCharm / WebStorm 等, 文案不写死 "IDEA"
+        val ideName = DshIdeName.productName()
+        startIdeField = JRadioButton(DshBundle.message("settings.autoStartMode.ideStartup", ideName))
+        startToolWindowField = JRadioButton(DshBundle.message("settings.autoStartMode.toolWindow"))
+        startManualField = JRadioButton(DshBundle.message("settings.autoStartMode.manual"))
+        ButtonGroup().apply {
+            add(startIdeField)
+            add(startToolWindowField)
+            add(startManualField)
+        }
         openExternalField = JCheckBox(DshBundle.message("settings.openExternalBrowser"))
-        syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles"))
         themeFollowField = JCheckBox(DshBundle.message("settings.themeFollow"))
+        syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles", ideName))
 
         launchWslField = JRadioButton(DshBundle.message("settings.mode.wsl"))
         launchWindowsField = JRadioButton(DshBundle.message("settings.mode.windows"))
@@ -90,13 +101,14 @@ class DshSettingsConfigurable : Configurable {
         windowsPortField = JTextField()
         windowsExtraArgsField = JTextField()
 
-        // 布局: 通用选项 -> 启动方式 (每个启动选项下缩进放置对应的端口/附加参数) -> 语言 -> 提示
+        // 布局: 常规选项 (按 启动时机 -> WebUI 展示 -> 编辑器联动 排列)
+        //       -> 启动方式 (每个启动选项下缩进放置对应的端口/附加参数) -> 语言 -> 提示
         var y = 0
-        y = fullWidth(y, autoStartField!!)
-        y = fullWidth(y, startOnIdeStartupField!!)
+        y = fullWidth(y, TitledSeparator(DshBundle.message("settings.generalSeparator")))
+        y = fullWidth(y, startModePanel())
         y = fullWidth(y, openExternalField!!)
-        y = fullWidth(y, syncEditedFilesField!!)
         y = fullWidth(y, themeFollowField!!)
+        y = fullWidth(y, syncEditedFilesField!!)
         y = fullWidth(y, TitledSeparator(DshBundle.message("settings.modeSeparator")))
         y = fullWidth(y, modePanel(launchWslField!!, wslPortField!!, wslExtraArgsField!!))
         y = fullWidth(y, modePanel(launchWindowsField!!, windowsPortField!!, windowsExtraArgsField!!))
@@ -116,6 +128,23 @@ class DshSettingsConfigurable : Configurable {
         JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
             isOpaque = false
             for (radio in radios) add(radio)
+        }
+
+    /** 「自动启动」一行: 标签 + 三个时机单选, 每个单选后跟问号图标 (悬浮提示该选项含义) */
+    private fun startModePanel(): JComponent = JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
+        isOpaque = false
+        add(JLabel(DshBundle.message("settings.autoStartMode.label")))
+        add(radioWithHelp(startIdeField!!, DshBundle.message("settings.autoStartMode.tooltip.ideStartup")))
+        add(radioWithHelp(startToolWindowField!!, DshBundle.message("settings.autoStartMode.tooltip.toolWindow")))
+        add(radioWithHelp(startManualField!!, DshBundle.message("settings.autoStartMode.tooltip.manual")))
+    }
+
+    /** 单选按钮 + 问号帮助图标 (悬浮提示该选项的含义) */
+    private fun radioWithHelp(radio: JRadioButton, tooltip: String): JComponent =
+        JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
+            isOpaque = false
+            add(radio)
+            add(JBLabel(AllIcons.General.ContextHelp).apply { toolTipText = tooltip })
         }
 
     /**
@@ -149,8 +178,7 @@ class DshSettingsConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val s = settings
-        return autoStartField?.isSelected != s.autoStart ||
-            startOnIdeStartupField?.isSelected != s.startOnIdeStartup ||
+        return startModeSelected() != s.startMode ||
             openExternalField?.isSelected != s.openExternalBrowser ||
             syncEditedFilesField?.isSelected != s.syncEditedFiles ||
             themeFollowField?.isSelected != s.themeFollowIde ||
@@ -164,8 +192,7 @@ class DshSettingsConfigurable : Configurable {
 
     override fun apply() {
         val s = settings
-        s.autoStart = autoStartField?.isSelected ?: s.autoStart
-        s.startOnIdeStartup = startOnIdeStartupField?.isSelected ?: s.startOnIdeStartup
+        s.startMode = startModeSelected()
         s.openExternalBrowser = openExternalField?.isSelected ?: s.openExternalBrowser
         s.syncEditedFiles = syncEditedFilesField?.isSelected ?: s.syncEditedFiles
         s.themeFollowIde = themeFollowField?.isSelected ?: s.themeFollowIde
@@ -188,8 +215,9 @@ class DshSettingsConfigurable : Configurable {
 
     override fun reset() {
         val s = settings
-        autoStartField?.isSelected = s.autoStart
-        startOnIdeStartupField?.isSelected = s.startOnIdeStartup
+        startIdeField?.isSelected = s.startMode == DshSettingsState.START_MODE_IDE
+        startToolWindowField?.isSelected = s.startMode == DshSettingsState.START_MODE_TOOL_WINDOW
+        startManualField?.isSelected = s.startMode == DshSettingsState.START_MODE_MANUAL
         openExternalField?.isSelected = s.openExternalBrowser
         syncEditedFilesField?.isSelected = s.syncEditedFiles
         themeFollowField?.isSelected = s.themeFollowIde
@@ -212,9 +240,17 @@ class DshSettingsConfigurable : Configurable {
         else -> ""
     }
 
+    /** 当前选中的自动启动时机 */
+    private fun startModeSelected(): String = when {
+        startToolWindowField?.isSelected == true -> DshSettingsState.START_MODE_TOOL_WINDOW
+        startManualField?.isSelected == true -> DshSettingsState.START_MODE_MANUAL
+        else -> DshSettingsState.START_MODE_IDE
+    }
+
     override fun disposeUIResources() {
-        autoStartField = null
-        startOnIdeStartupField = null
+        startIdeField = null
+        startToolWindowField = null
+        startManualField = null
         openExternalField = null
         syncEditedFilesField = null
         themeFollowField = null

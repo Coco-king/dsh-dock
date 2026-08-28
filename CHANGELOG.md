@@ -4,11 +4,19 @@
 
 ### 中文 (Chinese)
 
-- **新增（Added）**：新增「IDEA 启动时自动启动 dsh」开关（默认关闭）：开启后，IDE 打开项目即在后台提前启动 dsh，首次打开 Dsh Dock 窗口时 WebUI 已就绪，等待时间显著缩短；IDE 退出时 dsh 一并自动停止
+- **新增（Added）**：新增「自动启动」设置（默认 IDEA 启动时）：IDE 启动即在后台预热 dsh 与内嵌浏览器页面，首次打开 Dsh Dock 窗口几乎无需等待；可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止
+- **新增（Added）**：工具窗口日志每行增加毫秒级时间戳
+- **变更（Changed）**：启动 dsh 固定附加 `--no-open`（不再探测版本），启动更快（需 dsh 0.1.0-rc.8+）
+- **变更（Changed）**：「刷新」立即重载页面，工作空间同步转后台，不再卡顿数秒
+- **修复（Fixed）**：修复上次退出未关闭 Dsh Dock 窗口时，下次启动窗口一直空白的问题
 
 ### English
 
-- **Added**: New "Start dsh automatically when IDEA starts" toggle (off by default): once enabled, dsh is started in the background as soon as the IDE opens a project, so the WebUI is already ready the first time you open the Dsh Dock window — much less waiting; dsh stops automatically when the IDE exits
+- **Added**: New "Auto-start" setting (defaults to when the IDE starts): dsh and the embedded browser page are warmed up at IDE startup, so the first open of the Dsh Dock window needs virtually no wait; switchable to when the tool window opens or manual; dsh stops automatically when the IDE exits
+- **Added**: Millisecond timestamps in the tool window log
+- **Changed**: `--no-open` is now always appended when starting dsh (no version probing), making startup faster (requires dsh 0.1.0-rc.8+)
+- **Changed**: Refresh now reloads the page immediately with the workspace sync moved to the background
+- **Fixed**: Fixed the Dsh Dock window staying empty after an IDE restart when it was left open at the previous shutdown
 
 ## [1.0.3] - 2026-08-27
 

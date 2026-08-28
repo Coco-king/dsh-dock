@@ -32,11 +32,9 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     /** Windows 模式: 追加到 `dsh web` 后的附加参数 */
     var windowsExtraDshArgs: String = ""
 
-    /** 打开工具窗口时自动启动 */
-    var autoStart: Boolean = true
-
-    /** IDEA 启动 (本次会话首次打开项目) 时自动启动 dsh: 提前预热, 缩短首次打开工具窗口的等待时间 */
-    var startOnIdeStartup: Boolean = false
+    /** 自动启动时机 (三选一, 见 companion 常量): 默认 IDEA 启动时 —— 升级安装的老用户配置中无此字段,
+     * 读取时即落到该默认值, 等同于默认启用 */
+    var startMode: String = START_MODE_IDE
 
     /** WebUI 就绪后同时用系统浏览器打开 */
     var openExternalBrowser: Boolean = false
@@ -70,8 +68,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
         wslExtraDshArgs = state.wslExtraDshArgs
         windowsPort = state.windowsPort
         windowsExtraDshArgs = state.windowsExtraDshArgs
-        autoStart = state.autoStart
-        startOnIdeStartup = state.startOnIdeStartup
+        startMode = state.startMode
         openExternalBrowser = state.openExternalBrowser
         syncEditedFiles = state.syncEditedFiles
         themeFollowIde = state.themeFollowIde
@@ -84,6 +81,15 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
 
         const val MODE_WINDOWS: String = "windows"
         const val WINDOWS_DEFAULT_PORT: Int = 3080
+
+        /** 自动启动时机: IDE 启动 (本次会话首次打开项目) 时, 后台启动 dsh 并预热内嵌浏览器 */
+        const val START_MODE_IDE: String = "ideStartup"
+
+        /** 自动启动时机: 打开工具窗口时启动 (不做启动预热) */
+        const val START_MODE_TOOL_WINDOW: String = "toolWindow"
+
+        /** 自动启动时机: 不自动启动, 全手动 */
+        const val START_MODE_MANUAL: String = "manual"
 
         @JvmStatic
         fun getInstance(): DshSettingsState =

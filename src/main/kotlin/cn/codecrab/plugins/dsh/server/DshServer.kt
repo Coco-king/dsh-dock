@@ -101,6 +101,23 @@ object DshServer {
     fun isRunning(): Boolean = state == State.RUNNING
 
     /**
+     * 将「外部启动的 dsh」的运行状态复位为未启动 (只复位状态, 不触碰任何进程)。
+     * 端口上曾有的外部 dsh 消失 (如上个 IDE 会话的退出看门狗清理遗留进程) 而状态还卡在
+     * RUNNING 时, 面板会一直显示运行中且「启动」按钮无效 —— 仅在这种"无本插件进程标识"
+     * 的情况下复位状态; 本插件自己启动的 dsh 不受影响 (其消亡由 watch() 负责置回 IDLE)。
+     *
+     * @return true 表示确实发生了复位
+     */
+    fun resetIfExternal(): Boolean = synchronized(lock) {
+        if (state == State.RUNNING && process == null && stopCmdPath == null) {
+            setState(State.IDLE)
+            true
+        } else {
+            false
+        }
+    }
+
+    /**
      * 启动 dsh。
      * 状态变化通过 [addStateListener] 注册的监听器广播给所有面板。
      *
@@ -129,7 +146,7 @@ object DshServer {
             }
             setState(State.STARTING)
         }
-        // 启动放到后台线程: 其中会探测 dsh 版本 (决定是否附加 --no-open 等) 可能阻塞较久,
+        // 启动放到后台线程: 生成脚本/拉起进程/端口轮询等都可能阻塞较久,
         // 不能卡在 EDT; 真正拉起进程前会再检查 state 是否仍是 STARTING (用户可能已点停止)。
         Thread({
             try {
@@ -233,12 +250,9 @@ object DshServer {
             appendLine("echo \"${DshBundle.message("script.startingWeb", wslProject ?: "\$HOME", port.toString())}\"")
             // 后台运行并记录 PID: 全局 dsh 记录真实 PID 精确停止; npx 模式用 setsid 独立会话,
             // PID 文件写入 "-<pid>" 表示按进程组停止 (npx 内部还会派生 node/dsh 子进程)
-            // --no-open: dsh web 自 v0.1.0-rc.8 起默认会用系统浏览器打开 UI (与插件内嵌浏览器冲突),
-            // 该参数仅在受支持的版本上附加, 低版本不认识会报错
-            val noOpen = if (supportsNoOpen("wsl", onLog)) "--no-open" else ""
+            // --no-open: dsh web 默认会用系统浏览器打开 UI (与插件内嵌浏览器冲突), 固定附加
             val launchArgs = buildString {
-                append("web --port $port")
-                if (noOpen.isNotEmpty()) append(" $noOpen")
+                append("web --port $port --no-open")
                 if (extra.isNotEmpty()) append(" $extra")
             }.toString()
             val launchCmd = "\"\${DSH_RUN[@]}\" $launchArgs &"
@@ -286,9 +300,7 @@ object DshServer {
         extra: String,
         onLog: (String) -> Unit,
     ) {
-        // --no-open: dsh web 自 v0.1.0-rc.8 起默认会用系统浏览器打开 UI, 与插件内嵌浏览器冲突;
-        // 该参数低版本不认识会报错, 因此按探测到的版本决定是否附加
-        val noOpen = if (supportsNoOpen(if (WslSupport.isWindows) "windows" else "posix", onLog)) " --no-open" else ""
+        // --no-open: dsh web 默认会用系统浏览器打开 UI, 与插件内嵌浏览器冲突, 固定附加
         if (!WslSupport.isWindows) {
             // macOS/Linux: 直接用 bash 启动
             val shFile = WslSupport.createTempFile("dsh-run-posix-", ".sh")
@@ -304,13 +316,13 @@ object DshServer {
                 appendLine("fi")
                 // 优先全局 dsh; 未安装时兼容官方启动命令 npx @deepseek-ai/dsh web
                 appendLine("if command -v dsh >/dev/null 2>&1; then")
-                if (extra.isNotEmpty()) appendLine("  exec dsh web --port $port$noOpen $extra") else appendLine("  exec dsh web --port $port$noOpen")
+                if (extra.isNotEmpty()) appendLine("  exec dsh web --port $port --no-open $extra") else appendLine("  exec dsh web --port $port --no-open")
                 appendLine("elif command -v npx >/dev/null 2>&1; then")
                 appendLine("  echo \"${DshBundle.message("script.npxFallback")}\"")
                 if (extra.isNotEmpty()) {
-                    appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port$noOpen $extra")
+                    appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port --no-open $extra")
                 } else {
-                    appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port$noOpen")
+                    appendLine("  exec npx --yes @deepseek-ai/dsh web --port $port --no-open")
                 }
                 appendLine("else")
                 appendLine("  echo \"${DshBundle.message("script.dshMissing")}\"")
@@ -366,13 +378,13 @@ object DshServer {
             appendLine("exit /b 1")
             appendLine(":npx_ok")
             appendLine("echo ${DshBundle.message("script.cmdNpxFallback")}")
-            appendLine("npx --yes @deepseek-ai/dsh web --port $port$noOpen${if (extra.isNotEmpty()) " $extra" else ""}")
+            appendLine("npx --yes @deepseek-ai/dsh web --port $port --no-open${if (extra.isNotEmpty()) " $extra" else ""}")
             appendLine("exit /b %ERRORLEVEL%")
             appendLine(":dsh_ok")
             if (extra.isNotEmpty()) {
-                appendLine("dsh web --port $port$noOpen $extra")
+                appendLine("dsh web --port $port --no-open $extra")
             } else {
-                appendLine("dsh web --port $port$noOpen")
+                appendLine("dsh web --port $port --no-open")
             }
         }
         WslSupport.writeTextFile(cmdFile, content, crlf = true)
@@ -411,181 +423,6 @@ object DshServer {
         watch(p, port, onLog)
         waitForReadyInThread(port, p, onLog)
     }
-
-    // ---------- dsh 版本探测 (--no-open 支持) ----------
-
-    /**
-     * 判断目标 dsh 是否支持 `--no-open` (dsh web 自 v0.1.0-rc.8 起默认会用系统浏览器打开 UI,
-     * 可用 `--no-open` 关闭; 更低版本不认识该参数, 传了会启动报错)。
-     * - 探测到全局 dsh: 按其版本判断 (>= 0.1.0-rc.8 支持)
-     * - 未探测到全局 dsh: 启动会走 npx, npx 解析 registry 最新版 (>= rc.8), 视为支持
-     * - 探测失败 (超时/异常): 保守不附加 (避免低版本报错; 最多多开一个浏览器标签)
-     */
-    private fun supportsNoOpen(mode: String, onLog: (String) -> Unit): Boolean {
-        val version = try {
-            when (mode) {
-                "wsl" -> probeDshVersionOnWsl(onLog)
-                else -> if (WslSupport.isWindows) probeDshVersionOnWindows(onLog) else probeDshVersionOnPosix(onLog)
-            }
-        } catch (t: Throwable) {
-            LOG.warn("probe dsh version failed", t)
-            onLog(DshBundle.message("server.log.probeFailedNoNoOpen", t.message ?: "null"))
-            return false
-        }
-        return when {
-            version == null -> {
-                onLog(DshBundle.message("server.log.noGlobalDshNpx"))
-                true
-            }
-            isNoOpenSupportedVersion(version) -> {
-                onLog(DshBundle.message("server.log.supportsNoOpen", version))
-                true
-            }
-            else -> {
-                onLog(DshBundle.message("server.log.noNoOpenSupport", version))
-                false
-            }
-        }
-    }
-
-    /** dsh 版本是否 >= 0.1.0-rc.8 (该版本起 `dsh web` 支持 --no-open) */
-    internal fun isNoOpenSupportedVersion(version: String): Boolean {
-        val v = version.trim().removePrefix("v").removePrefix("V")
-        val m = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)(?:-(.*))?$").matchEntire(v) ?: return false
-        val major = m.groupValues[1].toInt()
-        val minor = m.groupValues[2].toInt()
-        val patch = m.groupValues[3].toInt()
-        if (major > 0) return true
-        if (minor > 1) return true
-        if (major == 0 && minor < 1) return false
-        if (patch > 0) return true
-        // 主版本号为 0.1.0: 无预发布 (正式版) 即 >= 0.1.0-rc.8; 预发布需 rc.N 且 N >= 8
-        val pre = m.groupValues[4].takeIf { it.isNotBlank() }
-        if (pre == null) return true
-        val rc = Regex("^rc\\.(\\d+)$").matchEntire(pre)
-        return rc != null && rc.groupValues[1].toInt() >= 8
-    }
-
-    /** Windows: 探测全局 dsh 版本 (未装全局 dsh 返回 null) */
-    private fun probeDshVersionOnWindows(onLog: (String) -> Unit): String? {
-        val cmd = WslSupport.createTempFile("dsh-version-win-", ".cmd")
-        WslSupport.writeTextFile(
-            cmd,
-            "@echo off\r\n" +
-                "where dsh >nul 2>&1\r\n" +
-                "if errorlevel 1 goto :noglobal\r\n" +
-                "dsh --version 2>nul\r\n" +
-                "exit /b 0\r\n" +
-                ":noglobal\r\n" +
-                "echo __NO_GLOBAL_DASH__\r\n" +
-                "exit /b 0\r\n",
-            crlf = true
-        )
-        val out = probeCommandOutput(
-            listOf(
-                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-WindowStyle", "Hidden",
-                "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & '${cmd.absolutePath}'",
-            ),
-            onLog
-        )
-        return if (out == NO_GLOBAL_DASH) null else out
-    }
-
-    /** WSL: 探测 WSL 内全局 dsh 版本 (未装全局 dsh 返回 null) */
-    private fun probeDshVersionOnWsl(onLog: (String) -> Unit): String? {
-        val sh = WslSupport.createTempFile("dsh-version-wsl-", ".sh")
-        val shWsl = WslSupport.toWslPath(sh.absolutePath) ?: sh.absolutePath
-        WslSupport.writeTextFile(
-            sh,
-            "#!/usr/bin/env bash\n" +
-                "if command -v dsh >/dev/null 2>&1; then\n" +
-                "  dsh --version 2>/dev/null\n" +
-                "else\n" +
-                "  echo __NO_GLOBAL_DASH__\n" +
-                "fi\n"
-        )
-        // 与 WSL 启动一致用 `bash -lic` (登录+交互, 会加载 ~/.bashrc 里的 nvm 等):
-        // 否则探测环境看不到启动实际会用到的全局 dsh, 导致"未检测到全局 dsh"的误判,
-        // 从而给旧版全局 dsh 错误附加 --no-open (低版本会启动报错)
-        val cmd = WslSupport.createTempFile("dsh-version-wsl-", ".cmd")
-        WslSupport.writeTextFile(
-            cmd,
-            "@echo off\r\nsetlocal\r\nwsl.exe bash -lic \"bash ${WslSupport.shellSingleQuote(shWsl)}\"\r\n",
-            crlf = true
-        )
-        val out = probeCommandOutput(
-            listOf(
-                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                "-WindowStyle", "Hidden",
-                "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & '${cmd.absolutePath}'",
-            ),
-            onLog
-        )
-        return if (out == NO_GLOBAL_DASH) null else out
-    }
-
-    /** macOS/Linux: 探测全局 dsh 版本 (未装全局 dsh 返回 null) */
-    private fun probeDshVersionOnPosix(onLog: (String) -> Unit): String? {
-        val sh = WslSupport.createTempFile("dsh-version-", ".sh")
-        WslSupport.writeTextFile(
-            sh,
-            "#!/usr/bin/env bash\n" +
-                "if command -v dsh >/dev/null 2>&1; then\n" +
-                "  dsh --version 2>/dev/null\n" +
-                "else\n" +
-                "  echo __NO_GLOBAL_DASH__\n" +
-                "fi\n"
-        )
-        val out = probeCommandOutput(listOf("bash", sh.absolutePath), onLog)
-        return if (out == NO_GLOBAL_DASH) null else out
-    }
-
-    /**
-     * 运行一条命令并捕获其标准输出最后一行非空内容 (有界超时); 失败/超时返回 null。
-     * 取最后一行: 交互 shell (bash -lic) 可能在前面打印 banner/杂讯, 探测结果才是最后输出。
-     */
-    private fun probeCommandOutput(cmd: List<String>, onLog: (String) -> Unit, timeoutSec: Long = 12): String? {
-        var p: Process? = null
-        return try {
-            p = ProcessBuilder(cmd).start()
-            val lastLine = java.util.concurrent.atomic.AtomicReference<String?>(null)
-            val reader = Thread({
-                try {
-                    p.inputStream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                        for (line in lines) {
-                            val t = line.trim()
-                            if (t.isNotEmpty()) lastLine.set(t)
-                        }
-                    }
-                } catch (_: Exception) {
-                }
-            }, "dsh-plugin-version-probe-reader").apply { isDaemon = true }
-            reader.start()
-            if (!p.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)) {
-                onLog(DshBundle.message("server.log.probeTimeout", timeoutSec.toString()))
-                p.destroy()
-                null
-            } else {
-                // 进程已退出, 等读取线程把输出读完 (输出很小, 很快)
-                try {
-                    reader.join(2000)
-                } catch (_: InterruptedException) {
-                }
-                lastLine.get()
-            }
-        } catch (t: Throwable) {
-            onLog(DshBundle.message("server.log.probeFailed", t.message ?: "null"))
-            null
-        } finally {
-            try {
-                p?.destroy()
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    private const val NO_GLOBAL_DASH = "__NO_GLOBAL_DASH__"
 
     // ---------- 输出 / 生命周期 ----------
 

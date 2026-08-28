@@ -7,6 +7,7 @@ import cn.codecrab.plugins.dsh.settings.DshSettingsConfigurable
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.sync.DshEditorSync
 import cn.codecrab.plugins.dsh.util.DshDisposer
+import cn.codecrab.plugins.dsh.util.DshIdeName
 import cn.codecrab.plugins.dsh.util.WslSupport
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import com.intellij.notification.NotificationGroupManager
@@ -54,6 +55,11 @@ class DshToolWindowPanel(
 ) : JPanel(BorderLayout()) {
 
     private val settings = DshSettingsState.getInstance()
+
+    /** 日志时间戳格式 (DateTimeFormatter 不可变、线程安全, 可复用)。
+     * 必须声明在 init 块之前: 构造面板期间 (预热日志回放/时间戳) 就会用到,
+     * Kotlin 按声明顺序初始化, 声明在 init 之后时构造期间该字段尚未赋值 (NPE)。 */
+    private val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
 
     /**
      * 状态监听器 (绑定到本面板实例, 注册与注销用的是同一实例)。
@@ -144,6 +150,10 @@ class DshToolWindowPanel(
     @Volatile
     private var startRequestedByThisPanel: Boolean = false
 
+    /** 正在等待预热完成 (占位状态): 此时 JCEF 尚不可用是预期, 不得触发"系统浏览器兜底" */
+    @Volatile
+    private var waitingForWarmup: Boolean = false
+
     /** 本次启动日志里是否出现过"找不到 dsh"警告 (决定失败通知的内容) */
     @Volatile
     private var dshMissingWarned: Boolean = false
@@ -180,8 +190,9 @@ class DshToolWindowPanel(
         // 注册状态监听: 立即以当前状态回调一次 (dsh 可能已在其他窗口启动), 后续所有窗口的
         // 启停状态变化都会广播到这里, 保证每个窗口的状态文字/按钮始终一致
         DshServer.addStateListener(stateListener)
-        if (settings.autoStart) {
-            // 稍后自动启动, 先渲染 UI
+        if (settings.startMode != DshSettingsState.START_MODE_MANUAL) {
+            // 非手动模式: 打开窗口时若 dsh 未运行则兜底启动 (IDE 启动模式下它通常已在运行, 此为重试),
+            // 稍后执行先渲染 UI
             SwingUtilities.invokeLater {
                 if (!project.isDisposed) ensureRunning()
             }
@@ -210,6 +221,11 @@ class DshToolWindowPanel(
             } else if (jcefAvailable && webUiLoaded) {
                 // 页面已加载时: 窗口重新获得焦点后, 必要时把共享工作空间切回本窗口的项目
                 checkActivationResync()
+            }
+            // 状态卡在 RUNNING 但端口已真实关闭 (如外部启动的 dsh 已被清理): 复位为未启动,
+            // 让状态显示与「启动」按钮恢复可用 (仅复位外部 dsh 的状态, 不会触碰本插件启动的进程)
+            if (DshServer.state == DshServer.State.RUNNING && !WslSupport.isPortOpen(settings.currentPort())) {
+                DshServer.resetIfExternal()
             }
         }
         timer.isRepeats = true
@@ -259,20 +275,23 @@ class DshToolWindowPanel(
     private fun createContentArea(): JComponent {
         val content = JPanel(BorderLayout())
         content.isOpaque = false
+        // 回放预热日志 (已按事件时刻打好时间戳, 原样追加) 并挂上实时转发接收预热后续日志
+        for (line in DshWebUiWarmup.attachLiveSink { appendEdt(it) }) appendEdt(line)
+        val warmed = DshWebUiWarmup.take()
+        if (warmed == null && DshWebUiWarmup.warmupInFlight()) {
+            // 窗口随 IDE 启动恢复而预热仍在进行: 不再并行自建浏览器/同步 (与预热重复劳动),
+            // 先显示占位提示, 预热完成后直接复用其浏览器; 超时/放弃才回退自建
+            appendLog(DshBundle.message("log.warmup.notReady"))
+            waitForWarmupThenAdopt(content)
+            return content
+        }
         val holder = try {
-            // 官方推荐的组合方式: 先创建 JBCefClient, 再通过 builder 装配浏览器,
-            // 最后把 LoadHandler 挂到该 client 的这个浏览器上
-            // (addLoadHandler 第二参为 @NotNull CefBrowser, 不能传 null)
-            val jbClient: JBCefClient = JBCefApp.getInstance().createClient()
-            val b: JBCefBrowser = JBCefBrowserBuilder().setClient(jbClient).build()
-            jbClient.addLoadHandler(createInjectLoadHandler(), b.cefBrowser)
-            jcefAvailable = true
-            browser = b
-            // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
-            if (!DshDisposer.register(parentDisposable, b)) {
-                appendLog(DshBundle.message("log.browserDisposeWarn"))
-            }
-            browserComponent(b)
+            adoptWarmedBrowser(warmed)
+                // 预热结果不可复用 (原因已记入日志): 释放后按原流程创建
+                ?: run {
+                    warmed?.dispose()
+                    createBrowserHolder()
+                }
         } catch (t: Throwable) {
             jcefAvailable = false
             appendLog(DshBundle.message("log.jcefUnavailable", t.message ?: "null"))
@@ -280,6 +299,159 @@ class DshToolWindowPanel(
         }
         content.add(holder, BorderLayout.CENTER)
         return content
+    }
+
+    /**
+     * 预热进行中: 显示占位提示, 后台等待预热完成 (最长 30s) 后复用其浏览器。
+     * 等待期间 jcefAvailable 保持 false, RUNNING 回调/看门狗不会触发重复的同步加载;
+     * 预热放弃/失败/超时则回退自建浏览器, 由看门狗走正常"同步 -> 加载"流程。
+     */
+    private fun waitForWarmupThenAdopt(content: JPanel) {
+        waitingForWarmup = true
+        content.add(
+            JBLabel(DshBundle.message("panel.warmupWaiting")).apply {
+                horizontalAlignment = SwingConstants.CENTER
+                foreground = JBColor.GRAY
+                border = BorderFactory.createEmptyBorder(24, 16, 24, 16)
+            },
+            BorderLayout.CENTER
+        )
+        Thread({
+            val deadline = System.currentTimeMillis() + 30_000
+            var warmed: DshWebUiWarmup.Warmed? = null
+            while (System.currentTimeMillis() < deadline) {
+                warmed = DshWebUiWarmup.take()
+                if (warmed != null) break
+                if (!DshWebUiWarmup.warmupInFlight()) break // 预热已结束 (放弃/失败): 立即回退
+                if (project.isDisposed) return@Thread
+                try {
+                    Thread.sleep(300)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+            }
+            SwingUtilities.invokeLater {
+                waitingForWarmup = false
+                if (project.isDisposed) {
+                    warmed?.dispose()
+                    return@invokeLater
+                }
+                content.removeAll()
+                val comp = if (warmed != null) {
+                    try {
+                        adoptWarmedBrowser(warmed)
+                            ?: run {
+                                warmed.dispose()
+                                createBrowserHolder()
+                            }
+                    } catch (t: Throwable) {
+                        jcefAvailable = false
+                        appendLog(DshBundle.message("log.jcefUnavailable", t.message ?: "null"))
+                        createFallbackPanel()
+                    }
+                } else {
+                    appendLog(DshBundle.message("log.warmup.fallback"))
+                    createBrowserHolder() // jcefAvailable=true, webUiLoaded=false: 看门狗稍后触发加载
+                }
+                content.add(comp, BorderLayout.CENTER)
+                content.revalidate()
+                content.repaint()
+            }
+        }, "dsh-plugin-warmup-wait").apply { isDaemon = true }.start()
+    }
+
+    /** 创建内嵌浏览器 (官方推荐组合: 先建 JBCefClient, 再经 builder 装配浏览器并挂 LoadHandler) */
+    private fun createBrowserHolder(): JComponent {
+        val jbClient: JBCefClient = JBCefApp.getInstance().createClient()
+        val b: JBCefBrowser = JBCefBrowserBuilder().setClient(jbClient).build()
+        jbClient.addLoadHandler(createInjectLoadHandler(), b.cefBrowser)
+        jcefAvailable = true
+        browser = b
+        // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
+        if (!DshDisposer.register(parentDisposable, b)) {
+            appendLog(DshBundle.message("log.browserDisposeWarn"))
+        }
+        return browserComponent(b)
+    }
+
+    /**
+     * 复用预热好的内嵌浏览器 ([DshWebUiWarmup]); 不可复用返回 null (由调用方释放并新建, 原因记入日志)。
+     * 复用条件: 端口与当前设置一致、dsh 在运行; 页面未加载完也可先接管 (见下)。
+     * 复用时把加载注入 (主题/语言/会话清除/引用暂存) 切换为本面板接管。
+     *  - 页面已加载: 直接显示, **不再重新同步** (预热时已同步过; 工作空间不一致才补一次同步刷新);
+     *  - 页面尚未加载完: 接管后短暂宽限等待预热加载完成, 超时才交回看门狗走"同步 -> 加载"流程。
+     */
+    private fun adoptWarmedBrowser(warmed: DshWebUiWarmup.Warmed?): JComponent? {
+        if (warmed == null) return null
+        val portOk = warmed.port == settings.currentPort()
+        val dshAlive = DshServer.state == DshServer.State.RUNNING || WslSupport.isPortOpen(warmed.port)
+        if (!portOk || !dshAlive) {
+            appendLog(
+                DshBundle.message(
+                    "log.warmup.notAdopted",
+                    DshBundle.message(if (!portOk) "log.warmup.reason.port" else "log.warmup.reason.dsh")
+                )
+            )
+            return null
+        }
+        val workspaceMismatch = warmed.syncedDshPath != currentProjectDshPath()
+        if (!warmed.pageLoaded && workspaceMismatch) {
+            // 页面未加载完且预热的工作空间也不是本项目: 复用无意义, 走正常"同步 -> 加载"
+            appendLog(
+                DshBundle.message("log.warmup.notAdopted", DshBundle.message("log.warmup.reason.workspace"))
+            )
+            return null
+        }
+        val b = warmed.browser
+        val jbClient = warmed.client
+        try {
+            // 加载注入接管: 移除预热 handler, 换成本面板的 (后续刷新由面板注入)
+            try {
+                jbClient.removeLoadHandler(warmed.warmHandler, b.cefBrowser)
+            } catch (_: Throwable) {
+            }
+            jbClient.addLoadHandler(createInjectLoadHandler(), b.cefBrowser)
+        } catch (_: Throwable) {
+            // 注入 handler 挂载失败 (罕见): 不复用, 交给调用方释放新建
+            appendLog(DshBundle.message("log.warmup.notAdopted", DshBundle.message("log.warmup.reason.handler")))
+            return null
+        }
+        browser = b
+        jcefAvailable = true
+        syncSessionIds = warmed.sessionIds
+        lastSyncedPath = warmed.syncedDshPath
+        // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
+        if (!DshDisposer.register(parentDisposable, b)) {
+            appendLog(DshBundle.message("log.browserDisposeWarn"))
+        }
+        if (warmed.pageLoaded) {
+            // 页面已就绪: 直接显示, 不重新同步 (预热时已同步过本项目工作空间)
+            webUiLoaded = true
+            pageLoaded = true
+            appendLog(DshBundle.message("log.warmup.adopted"))
+            if (workspaceMismatch) {
+                SwingUtilities.invokeLater {
+                    if (!project.isDisposed) loadWebUi()
+                }
+            }
+        } else {
+            // 页面尚未加载完: 先接管并短暂宽限等待其加载完成 (onLoadEnd 置位 pageLoaded);
+            // 超时未完成则放行 (webUiLoaded=false), 由看门狗走"同步 -> 加载"流程
+            webUiLoaded = true
+            pageLoaded = false
+            appendLog(DshBundle.message("log.warmup.adoptedLoading"))
+            val grace = javax.swing.Timer(4000, null)
+            grace.addActionListener {
+                grace.stop()
+                if (project.isDisposed) return@addActionListener
+                if (!pageLoaded) {
+                    webUiLoaded = false // 预热页未如期加载完: 交回看门狗重新同步加载
+                }
+            }
+            grace.isRepeats = false
+            grace.start()
+        }
+        return browserComponent(b)
     }
 
     /**
@@ -294,21 +466,16 @@ class DshToolWindowPanel(
     // ---------- WebUI 主题/语言覆盖 ----------
 
     /**
-     * dsh WebUI 的主题跟随 `matchMedia("prefers-color-scheme: dark")`,
-     * 语言跟随 `navigator.languages`（JCEF 的该值跟随系统/浏览器语言, 不一定与 IDE 一致）。
-     *
-     * 语言控制的**主路径**不是这里: 插件在加载页面前通过 dsh 设置 API 写入持久化语言偏好
-     * (settings.locale.preference, 见 [effectiveDshLocale] / DshWorkspaceApi.syncLocalePreference)——
-     * dsh 的语言优先级是「持久化偏好 > 浏览器」, 因此页面一加载就是正确的语言。
-     * 这里注入的 JS 只作兜底 (覆盖 navigator 以防个别场景偏好未生效), 并负责主题跟随。
+     * 加载注入: 主题/语言覆盖与持久化会话清除 (公共实现在 [DshWebUiInject], 与浏览器预热共用)。
+     * 语言控制的主路径是加载页面前写入 dsh 持久化语言偏好 (loadWebUi 中), 注入只作兜底并负责主题跟随。
      */
     private fun createInjectLoadHandler(): CefLoadHandlerAdapter = object : CefLoadHandlerAdapter() {
         override fun onLoadStart(browser: CefBrowser, frame: CefFrame, transitionType: CefRequest.TransitionType) {
             if (frame.isMain) {
                 pageLoaded = false
-                injectUiThemeLocaleOverride(browser)
-                // 在应用脚本执行前清除"不属于当前项目"的持久化会话选择 (见 [clearPersistedSessionIfForeign])
-                clearPersistedSessionIfForeign(browser)
+                DshWebUiInject.injectUiThemeLocaleOverride(browser, settings, ::appendLog)
+                // 在应用脚本执行前清除"不属于当前项目"的持久化会话选择
+                DshWebUiInject.clearPersistedSessionIfForeign(browser, syncSessionIds, ::appendLog)
             }
         }
 
@@ -320,63 +487,6 @@ class DshToolWindowPanel(
                 autoReloadAfterSyncFailure()
             }
         }
-    }
-
-    private fun injectUiThemeLocaleOverride(browser: CefBrowser) {
-        // 语言注入始终执行: 跟随模式下也显式指定 dsh 语言, 不依赖 JCEF 浏览器默认语言
-        val dark = settings.themeFollowIde && DshToolWindowFactory.isDarkUi()
-        val langs = if (settings.forceLocale.isBlank()) followIdeLanguages() else {
-            val l = settings.forceLocale.trim()
-            if (l.startsWith("zh", ignoreCase = true)) listOf(l, "zh", "en")
-            else listOf(l, "en")
-        }
-        try {
-            browser.executeJavaScript(uiOverrideScript(dark, langs), "dsh://ide-renderer-override.js", 0)
-        } catch (t: Throwable) {
-            appendLog(DshBundle.message("log.injectFailed", t.message ?: "null"))
-        }
-    }
-
-    /**
-     * "跟随 IDE/浏览器"模式下推导 dsh 语言 (JS 注入兜底用): 始终显式注入, 不依赖 JCEF 默认语言
-     * (JCEF 的 `navigator.languages` 跟随系统/浏览器, 英文 IDE + 中文系统时可能显示中文)。
-     * IDE 是中文 (见 [ideLanguageTag], 含简/繁) 时注入中文; 其他语言注入英文。
-     */
-    private fun followIdeLanguages(): List<String> =
-        if (ideLanguageTag().startsWith("zh")) listOf("zh", "en") else listOf("en")
-
-    private fun uiOverrideScript(dark: Boolean, langs: List<String>): String {
-        val darkJs = if (dark) "true" else "false"
-        val langsJs = langs.joinToString(prefix = "[", postfix = "]", separator = ", ") { "\"$it\"" }
-        val langOverride = if (langs.isNotEmpty()) {
-            """
-            |        try {
-            |          Object.defineProperty(Navigator.prototype, "languages", { configurable: true, get: function () { return L; } });
-            |          Object.defineProperty(Navigator.prototype, "language", { configurable: true, get: function () { return L[0]; } });
-            |        } catch (err) {}
-            """.trimMargin()
-        } else ""
-        return """
-            |(function () {
-            |  var DARK = $darkJs;
-            |  var L = $langsJs;
-            |  try {
-            |    var realMatchMedia = window.matchMedia.bind(window);
-            |    window.matchMedia = function (query) {
-            |      try {
-            |        if (typeof query === "string" && query.indexOf("prefers-color-scheme") !== -1) {
-            |          return { matches: DARK, media: query, onchange: null,
-            |                   addListener: function () {}, removeListener: function () {},
-            |                   addEventListener: function () {}, removeEventListener: function () {},
-            |                   dispatchEvent: function () { return false; } };
-            |        }
-            |      } catch (err) {}
-            |      return realMatchMedia(query);
-            |    };
-            |  } catch (err) {}
-            |$langOverride
-            |})();
-        """.trimMargin()
     }
 
     // ---------- 引用注入 (右键菜单发送) ----------
@@ -430,7 +540,7 @@ class DshToolWindowPanel(
      * 注意: 每次都追加, 不做去重 —— 用户可能对同一段代码多次发送。
      */
     private fun buildInjectScript(reference: String): String {
-        val refJs = jsString(reference)
+        val refJs = DshWebUiInject.jsString(reference)
         return """
             |(function () {
             |  var REF = $refJs;
@@ -459,23 +569,6 @@ class DshToolWindowPanel(
             |  inject();
             |})();
         """.trimMargin()
-    }
-
-    /** 转成 JS 双引号字符串字面量 (路径可能含引号/反斜杠等) */
-    private fun jsString(value: String): String {
-        val sb = StringBuilder("\"")
-        for (ch in value) {
-            when (ch) {
-                '\\' -> sb.append("\\\\")
-                '"' -> sb.append("\\\"")
-                '\n' -> sb.append("\\n")
-                '\r' -> sb.append("\\r")
-                '\t' -> sb.append("\\t")
-                else -> if (ch.code < 0x20) sb.append("\\u%04x".format(ch.code)) else sb.append(ch)
-            }
-        }
-        sb.append("\"")
-        return sb.toString()
     }
 
     private fun createFallbackPanel(): JComponent {
@@ -513,7 +606,8 @@ class DshToolWindowPanel(
 
     private fun reloadWebUi() {
         if (jcefAvailable) {
-            loadWebUi()
+            // 手动刷新: 立即重载页面 (同步转后台), 不再等同步链路走完才动
+            loadWebUi(loadFirst = true)
         } else {
             // JCEF 不可用时, 刷新改为在系统浏览器中打开
             openInSystemBrowser()
@@ -521,17 +615,18 @@ class DshToolWindowPanel(
     }
 
     /**
-     * 加载 WebUI。加载前先通过 dsh 的 /api 同步工作空间 (确保当前项目是会话工作空间,
-     * 详见 [DshWorkspaceApi]), **同步成功后**才加载页面 —— 这样页面初始选中就会落在当前项目上。
-     * 端口刚就绪时 dsh /api 可能尚未完全就绪, 因此在加载前小间隔重试同步 (约 8s 上限),
-     * 避免"先加载失败、再整页刷新重试"的多次刷新; 重试仍失败才按现状直接加载 (不影响使用)。
+     * 加载 WebUI。
+     *  - [loadFirst]=false (默认, 启动/激活恢复/自动重试): 先同步工作空间 (带重试) 再加载页面,
+     *    保证首屏就落在当前项目上;
+     *  - [loadFirst]=true (手动刷新): 立即重载页面, 同步转后台 —— 工作空间绝大多数情况本就是
+     *    当前项目, 页面直接可用; 仅当同步发现需要切换工作空间 (bumped) 或同步失败时才补刷一次。
      *
      * 多窗口共用同一个 dsh 实例 (同一进程的多个项目窗口、或复用同一端口的多个 IDE 实例):
      * **只有当前活动窗口才同步工作空间, 非活动窗口不刷新页面、不抢占**共享 dsh 的"项目空间"。
      * 非活动窗口已显示的页面保持原样 (不会因其他窗口重启 dsh 而被整个刷掉):
      * 窗口重新获得焦点后由 [checkActivationResync] 再同步并切回自己的项目。
      */
-    private fun loadWebUi() {
+    private fun loadWebUi(loadFirst: Boolean = false) {
         val port = settings.currentPort()
         val url = DshServer.webUrl(port)
         val projectPath = project.basePath
@@ -550,13 +645,17 @@ class DshToolWindowPanel(
         // 单飞: 已有一次"同步+加载"在进行时, 忽略并发的重复请求 (RUNNING 回调/看门狗/手动刷新),
         // 避免"先加载一次、工作空间同步完又刷新一次"的体验问题
         if (!loadInFlight.compareAndSet(false, true)) return
+        if (loadFirst) {
+            // 先立即重载页面, 让刷新按钮即时生效
+            appendLog(DshBundle.message("log.loaded", url))
+            browser?.loadURL(url)
+        }
         appendLog(DshBundle.message("log.syncingWorkspace", projectPath))
         Thread({
-            var loadScheduled = false
+            var settled = false
             try {
                 val dshPath = DshReference.dshPathFromString(projectPath, settings.launchMode)
-                // 端口刚就绪时 dsh 的 /api 可能还有一小段未就绪窗口: 在加载页面前小间隔重试同步,
-                // 成功后才加载 —— 避免"先加载失败 → 整页刷新重试"导致的多次刷新/多次同步
+                // 端口刚就绪时 dsh 的 /api 可能还有一小段未就绪窗口: 小间隔重试同步 (约 8s 上限)
                 var result: DshWorkspaceApi.WorkspaceSyncResult? = null
                 val deadline = System.currentTimeMillis() + 8000
                 while (result == null && System.currentTimeMillis() < deadline) {
@@ -584,21 +683,36 @@ class DshToolWindowPanel(
                 }
                 // dsh 语言跟随: 写入持久化语言偏好 (settings.locale.preference),
                 // 页面加载后即生效 (dsh 的语言优先级: 偏好 > 浏览器); 失败不阻断加载
-                val dshLocale = effectiveDshLocale()
+                val dshLocale = DshWebUiInject.effectiveDshLocale(settings)
                 if (DshWorkspaceApi.syncLocalePreference(port, dshLocale)) {
                     appendLog(DshBundle.message("log.localeSet", dshLocale))
                 }
-                loadScheduled = true
+                settled = true
                 SwingUtilities.invokeLater {
                     // 先释放单飞标记再发起加载 (同一 EDT 任务内不会插入新的加载请求)
                     loadInFlight.set(false)
                     if (project.isDisposed) return@invokeLater
-                    appendLog(DshBundle.message("log.loaded", url))
-                    browser?.loadURL(url)
+                    val r = result
+                    when {
+                        // 同步前已加载过页面: 仅当需要切换工作空间或同步失败时才自动补刷一次
+                        loadFirst && (r == null || r.bumped) -> {
+                            appendLog(
+                                DshBundle.message(
+                                    if (r == null) "log.syncFailedAutoReload" else "log.workspaceSwitchedReload"
+                                )
+                            )
+                            browser?.loadURL(url)
+                        }
+                        // 同步前已加载且工作空间无需切换: 页面已正确, 无需再刷
+                        !loadFirst -> {
+                            appendLog(DshBundle.message("log.loaded", url))
+                            browser?.loadURL(url)
+                        }
+                    }
                 }
             } finally {
                 // 兜底: 若同步/加载流程异常中断 (invokeLater 未安排), 也要释放单飞标记
-                if (!loadScheduled) loadInFlight.set(false)
+                if (!settled) loadInFlight.set(false)
             }
         }, "dsh-plugin-workspace-ensure").apply { isDaemon = true }.start()
     }
@@ -625,33 +739,6 @@ class DshToolWindowPanel(
     /** 本项目在 dsh 侧的工作空间路径 (按启动方式转换, 见 [DshReference]) */
     private fun currentProjectDshPath(): String? =
         DshReference.dshPathFromString(project.basePath, settings.launchMode)
-
-    /**
-     * IDE 界面语言子标签 (小写, 如 "en" / "zh")。
-     * 用平台解析 bundle 的 locale (DynamicBundle.getLocale) —— 这才是真正的 IDE 界面语言;
-     * `user.language` 系统属性只是 JVM 默认语言 (英文 IDE + 中文系统时仍是 zh), 不能用。
-     */
-    private fun ideLanguageTag(): String = try {
-        com.intellij.DynamicBundle.getLocale().language.lowercase()
-    } catch (t: Throwable) {
-        // 旧版本平台兜底: 退到 JVM 默认语言
-        java.util.Locale.getDefault().language.lowercase()
-    }
-
-    /**
-     * 推导 dsh WebUI 应使用的语言 id ("zh" / "en", dsh 仅支持这两种):
-     * 设置页强制指定 (settings.forceLocale) 优先; 跟随模式下按 IDE 界面语言
-     * (见 [ideLanguageTag], 含简/繁中文) 推导, 其余语言一律英文。
-     * 该 id 通过 dsh 的 settings.update RPC 写入持久化语言偏好。
-     */
-    private fun effectiveDshLocale(): String {
-        val forced = settings.forceLocale.trim()
-        return when {
-            forced.startsWith("zh", ignoreCase = true) -> "zh"
-            forced.equals("en", ignoreCase = true) -> "en"
-            else -> if (ideLanguageTag().startsWith("zh")) "zh" else "en"
-        }
-    }
 
     /**
      * 激活恢复: 窗口从**非活动真正变为活动**时, 若本窗口项目尚未成功同步为共享 dsh 的工作空间
@@ -701,36 +788,6 @@ class DshToolWindowPanel(
             }
             timer.isRepeats = false
             timer.start()
-        }
-    }
-
-    /**
-     * dsh WebUI 会把"上次打开的会话"持久化到浏览器 localStorage (dsh.sessions.current),
-     * 页面加载时会恢复它, 从而跳过工作空间的初始选中逻辑, 导致页面停留在旧项目。
-     * 在 onLoadStart (应用脚本执行前) 条件清除: 持久化的会话不属于当前项目工作空间时才删,
-     * 属于 (用户本来就在当前项目里) 则保留, 页面恢复其会话。
-     * [syncSessionIds] 为 null (尚未同步/同步失败) 时不动 localStorage, 按 dsh 原行为。
-     */
-    private fun clearPersistedSessionIfForeign(browser: CefBrowser) {
-        val sessionIds = syncSessionIds ?: return
-        val idsJs = sessionIds.joinToString(prefix = "[", postfix = "]", separator = ",") { jsString(it) }
-        val script = """
-            |(function () {
-            |  try {
-            |    var raw = localStorage.getItem("dsh.sessions.current");
-            |    if (raw) {
-            |      var o = JSON.parse(raw);
-            |      if (o && o.sessionId && $idsJs.indexOf(o.sessionId) === -1) {
-            |        localStorage.removeItem("dsh.sessions.current");
-            |      }
-            |    }
-            |  } catch (err) {}
-            |})();
-        """.trimMargin()
-        try {
-            browser.executeJavaScript(script, "dsh://ide-workspace-clear.js", 0)
-        } catch (t: Throwable) {
-            appendLog(DshBundle.message("log.clearPersistFailed", t.message ?: "null"))
         }
     }
 
@@ -793,8 +850,11 @@ class DshToolWindowPanel(
                         loadWebUi()
                     }
                     // JCEF 可用时按设置决定是否也在系统浏览器打开;
-                    // JCEF 不可用时自动改用系统浏览器打开 WebUI
-                    if ((settings.openExternalBrowser || !jcefAvailable) && !externalBrowserOpenedForSession) {
+                    // JCEF 不可用时自动改用系统浏览器打开 WebUI。
+                    // 等待预热期间 jcefAvailable=false 是占位状态的预期, 不算"不可用", 不触发兜底
+                    if ((settings.openExternalBrowser || !jcefAvailable) &&
+                        !externalBrowserOpenedForSession && !waitingForWarmup
+                    ) {
                         externalBrowserOpenedForSession = true
                         desktopBrowse(DshServer.webUrl(settings.currentPort()))
                         if (!jcefAvailable) {
@@ -853,9 +913,9 @@ class DshToolWindowPanel(
                     DshBundle.message("notify.fail.nodeMissing.windows")
                 }
                 missingDsh -> if (settings.launchMode == DshSettingsState.MODE_WSL) {
-                    DshBundle.message("notify.fail.dshMissing.wsl")
+                    DshBundle.message("notify.fail.dshMissing.wsl", DshIdeName.productName())
                 } else {
-                    DshBundle.message("notify.fail.dshMissing.windows")
+                    DshBundle.message("notify.fail.dshMissing.windows", DshIdeName.productName())
                 }
                 wslError -> DshBundle.message("notify.fail.wslError")
                 else -> if (settings.launchMode == DshSettingsState.MODE_WSL) {
@@ -885,6 +945,13 @@ class DshToolWindowPanel(
         refreshBtn.isEnabled = !busy
     }
 
+    /** 给日志行加时间戳 (多行消息只在首行加, 换行后的内容原样保留) */
+    private fun stamp(line: String): String {
+        val ts = java.time.LocalTime.now().format(timeFormatter)
+        val nl = line.indexOf('\n')
+        return if (nl >= 0) "[$ts] ${line.substring(0, nl)}${line.substring(nl)}" else "[$ts] $line"
+    }
+
     private fun appendLog(line: String) {
         // 日志里出现"找不到 dsh"警告 -> 标记, 启动失败通知里给出对应提示
         // (中英两种标记都匹配: 生成脚本里已按 IDE 语言输出对应语言的消息)
@@ -901,9 +968,16 @@ class DshToolWindowPanel(
         ) {
             wslErrorSeen = true
         }
+        // 时间戳在日志产生时 (调用线程) 立即打上, 而非 EDT 实际渲染时 ——
+        // EDT 繁忙 (如 JCEF 冷启动) 会延迟渲染, 按渲染时间计时会失真
+        appendEdt(stamp(line))
+    }
+
+    /** 把已带时间戳的文本追加到日志面板 (预热日志回放用: 时间戳已在事件产生时打好) */
+    private fun appendEdt(text: String) {
         SwingUtilities.invokeLater {
             if (project.isDisposed) return@invokeLater
-            logArea.append(line)
+            logArea.append(text)
             logArea.append("\n")
             trimLog()
             logArea.caretPosition = logArea.document.length

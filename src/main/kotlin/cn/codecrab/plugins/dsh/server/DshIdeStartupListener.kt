@@ -2,6 +2,7 @@ package cn.codecrab.plugins.dsh.server
 
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.toolwindow.DshWebUiWarmup
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
@@ -10,11 +11,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.ProjectManagerListener
 
 /**
- * 「IDEA 启动时自动启动 dsh」(设置开启时生效)。
+ * 「自动启动时机 = IDEA 启动时」(设置为该模式时生效)。
  *
  * 注册为 ProjectManagerListener 应用级监听 (plugin.xml applicationListeners):
  * 本次 IDE 会话首次打开项目时立即在后台拉起 dsh —— 让 dsh 提前完成启动与端口监听,
- * 用户首次打开 Dsh Dock 工具窗口时 WebUI 已就绪, 显著缩短首次等待时间。
+ * 并同步预热内嵌浏览器页面 ([DshWebUiWarmup]); 用户首次打开 Dsh Dock 工具窗口时
+ * WebUI 已就绪, 显著缩短首次等待时间。
  *
  * - 每个 IDE 会话只自动启动一次 (仅首次打开项目时触发): 之后用户手动停止 dsh、
  *   再打开其他项目窗口不会被意外重新拉起;
@@ -33,13 +35,16 @@ class DshIdeStartupListener : ProjectManagerListener {
     @Suppress("OVERRIDE_DEPRECATION")
     override fun projectOpened(project: Project) {
         val settings = DshSettingsState.getInstance()
-        if (!settings.startOnIdeStartup) return
+        if (settings.startMode != DshSettingsState.START_MODE_IDE) return
         if (autoStartedThisSession) return
         autoStartedThisSession = true
         if (DshServer.state != DshServer.State.IDLE) {
-            // 已在启动/运行 (含外部启动的同端口 dsh): 无需预热
+            // 已在启动/运行 (含外部启动的同端口 dsh): 无需启动 dsh, 但仍预热内嵌浏览器页面
+            DshWebUiWarmup.warmupForProject(project)
             return
         }
+        // 后台启动 dsh 的同时预热内嵌浏览器 (等 dsh 就绪后自动加载 WebUI)
+        DshWebUiWarmup.warmupForProject(project)
         // 后台线程启动, 不阻塞项目打开 (EDT); 启动全流程 (探测/拉起/端口轮询) 均在后台完成
         Thread({ autoStart(project) }, "dsh-plugin-ide-startup").apply { isDaemon = true }.start()
     }

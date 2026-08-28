@@ -1,5 +1,6 @@
 package cn.codecrab.plugins.dsh.workspace
 
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.diagnostic.Logger
@@ -33,8 +34,14 @@ object DshWorkspaceApi {
 
     private class RpcResult(val ok: Boolean, val value: JsonObject?)
 
-    /** 工作空间同步结果: workspaceId + 该工作空间当前的 sessionIds (供调用方判断持久化会话归属) */
-    data class WorkspaceSyncResult(val workspaceId: String, val sessionIds: List<String>)
+    /** 工作空间同步结果: workspaceId + 该工作空间当前的 sessionIds (供调用方判断持久化会话归属)。
+     * bumped = 本次同步让"最近工作空间"切换到了本项目 (新建工作空间 / 提升既有空间的新鲜度):
+     * 调用方若在同步前已加载页面, 页面选中的还是旧的最近工作空间, 需要补刷一次 */
+    data class WorkspaceSyncResult(
+        val workspaceId: String,
+        val sessionIds: List<String>,
+        val bumped: Boolean = false,
+    )
 
     /**
      * 确保项目工作空间存在且为"最近", 返回同步结果; 失败返回 null (调用方按现状继续)。
@@ -58,12 +65,19 @@ object DshWorkspaceApi {
             it.asString.takeIf(String::isNotBlank)
         }
         val created = value.get("created").asBoolean
+        var bumped = created
+        var sessionItems: JsonArray? = null
         if (!created) {
             // 工作空间已存在: 只有当它当前不是"最近工作空间"时才新建会话提升其新鲜度
-            val recent = computeRecentWorkspaceId(port, deadline) ?: return WorkspaceSyncResult(workspaceId, sessionIds)
-            if (recent != workspaceId) {
+            val recent = computeRecentWorkspace(port, deadline)
+            if (recent == null) {
+                return WorkspaceSyncResult(workspaceId, sessionIds, bumped)
+            }
+            sessionItems = recent.second
+            if (recent.first != workspaceId) {
                 val bump = rpcWithin(port, "session.create", "{\"workspaceId\":${jsonString(workspaceId)}}", deadline)
                 if (bump?.ok == true) {
+                    bumped = true
                     // 新会话立即可归档: 归档不影响"最近"计算 (session.list 含已归档会话),
                     // 但 connectWorkspace 复用时跳过已归档, 避免它成为被反复复用的旧空白
                     bump.value?.get("sessionId")?.asString?.let { archiveSession(port, it, deadline) }
@@ -73,16 +87,20 @@ object DshWorkspaceApi {
             }
         }
         // 空白会话卫生: 归档项目工作空间里所有遗留空白会话
-        archiveBlankSessions(port, sessionIds, deadline)
-        return WorkspaceSyncResult(workspaceId, sessionIds)
+        // (复用上面 session.list 的结果, 省一次 RPC; 新建的工作空间没有会话, 无需清理)
+        archiveBlankSessions(port, sessionIds, sessionItems, deadline)
+        return WorkspaceSyncResult(workspaceId, sessionIds, bumped)
     }
 
-    /** 归档项目工作空间里的空白会话 (空会话无内容, 归档只是从侧边栏隐藏) */
-    private fun archiveBlankSessions(port: Int, workspaceSessionIds: List<String>, deadline: Long) {
-        if (workspaceSessionIds.isEmpty()) return
-        val s = rpcWithin(port, "session.list", "{}", deadline) ?: return
-        val items = s.value?.getAsJsonArray("items") ?: return
-        for (el in items) {
+    /** 归档项目工作空间里的空白会话 (空会话无内容, 归档只是从侧边栏隐藏); 会话列表由调用方传入复用 */
+    private fun archiveBlankSessions(
+        port: Int,
+        workspaceSessionIds: List<String>,
+        sessionItems: JsonArray?,
+        deadline: Long,
+    ) {
+        if (workspaceSessionIds.isEmpty() || sessionItems == null) return
+        for (el in sessionItems) {
             val o = el.asJsonObject
             val sid = o.get("sessionId")?.asString ?: continue
             if (sid in workspaceSessionIds && o.get("blank")?.asBoolean == true) {
@@ -121,12 +139,15 @@ object DshWorkspaceApi {
         return true
     }
 
-    /** 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者 */
-    private fun computeRecentWorkspaceId(port: Int, deadline: Long): String? {
-        val ws = rpcWithin(port, "workspace.list", "{}", deadline) ?: return null
-        val s = rpcWithin(port, "session.list", "{}", deadline) ?: return null
-        val wsItems = ws.value?.getAsJsonArray("items") ?: return null
-        val sessionItems = s.value?.getAsJsonArray("items") ?: return null
+    /**
+     * 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者。
+     * 同时带回 session.list 的会话列表, 供空白会话清理复用 (省一次 RPC)。
+     */
+    private fun computeRecentWorkspace(port: Int, deadline: Long): Pair<String?, JsonArray?> {
+        val ws = rpcWithin(port, "workspace.list", "{}", deadline) ?: return null to null
+        val s = rpcWithin(port, "session.list", "{}", deadline) ?: return null to null
+        val wsItems = ws.value?.getAsJsonArray("items") ?: return null to null
+        val sessionItems = s.value?.getAsJsonArray("items") ?: return null to null
 
         val updatedAt = HashMap<String, Long>()
         for (el in sessionItems) {
@@ -157,7 +178,7 @@ object DshWorkspaceApi {
                 selectedTime = latest
             }
         }
-        return selected
+        return selected to sessionItems
     }
 
     /** 在截止时间前调用一次 dsh /api RPC; 传输层失败返回 null, 业务失败返回 ok=false 的结果 */

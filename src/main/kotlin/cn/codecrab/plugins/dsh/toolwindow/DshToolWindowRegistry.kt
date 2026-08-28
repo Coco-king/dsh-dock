@@ -27,6 +27,9 @@ object DshToolWindowRegistry {
         panels.remove(project)
     }
 
+    /** 是否存在任一面板 (浏览器预热据此判断: 已有面板时页面由面板自己管理, 不再预热) */
+    fun hasAnyPanel(): Boolean = panels.isNotEmpty()
+
     /** 发送引用到当前项目的 Dsh 输入框, 并激活工具窗口 */
     fun send(project: Project, reference: String) {
         if (project.isDisposed) return
