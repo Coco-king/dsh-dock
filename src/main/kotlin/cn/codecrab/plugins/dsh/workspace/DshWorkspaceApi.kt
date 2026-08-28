@@ -1,4 +1,4 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.workspace
 
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser

@@ -1,5 +1,7 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.sync
 
+import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.application.ApplicationManager

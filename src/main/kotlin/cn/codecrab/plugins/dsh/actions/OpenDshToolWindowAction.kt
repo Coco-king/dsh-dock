@@ -1,5 +1,7 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.actions
 
+import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.toolwindow.DshToolWindowFactory
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent

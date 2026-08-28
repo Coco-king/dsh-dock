@@ -1,4 +1,4 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.toolwindow
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.IconLoader

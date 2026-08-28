@@ -10,24 +10,26 @@
     <resource-bundle>messages.DshBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <applicationService serviceImplementation="cn.codecrab.plugins.dsh.DshSettingsState"/>
+        <applicationService serviceImplementation="cn.codecrab.plugins.dsh.settings.DshSettingsState"/>
         <notificationGroup id="Dsh" displayType="BALLOON"/>
         <toolWindow
             id="Dsh Dock"
             anchor="right"
             icon="/icons/dshWhaleBlack.svg"
-            factoryClass="cn.codecrab.plugins.dsh.DshToolWindowFactory"/>
+            factoryClass="cn.codecrab.plugins.dsh.toolwindow.DshToolWindowFactory"/>
         <applicationConfigurable
             id="cn.codecrab.plugins.dsh.settings"
             parentId="other"
             displayName="Dsh Dock"
-            instance="cn.codecrab.plugins.dsh.DshSettingsConfigurable"/>
+            instance="cn.codecrab.plugins.dsh.settings.DshSettingsConfigurable"/>
     </extensions>
 
+    <!-- action 的 id 与 text/description 资源 key 是稳定标识 (与类所在包无关):
+         改 id 会丢失用户已绑定的快捷键, 改 key 需同步 properties 文件, 重构移动类时保持不变 -->
     <actions>
         <action
             id="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
-            class="cn.codecrab.plugins.dsh.OpenDshToolWindowAction"
+            class="cn.codecrab.plugins.dsh.actions.OpenDshToolWindowAction"
             text="cn.codecrab.plugins.dsh.OpenDshToolWindowAction.action.text"
             description="cn.codecrab.plugins.dsh.OpenDshToolWindowAction.action.description">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
@@ -40,14 +42,14 @@
             <!-- 编辑器右键: 发送选中代码的行范围引用到 Dsh 输入框 -->
             <action
                 id="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
-                class="cn.codecrab.plugins.dsh.SendSelectionToDshAction"
+                class="cn.codecrab.plugins.dsh.actions.SendSelectionToDshAction"
                 text="cn.codecrab.plugins.dsh.SendSelectionToDshAction.action.text"
                 description="cn.codecrab.plugins.dsh.SendSelectionToDshAction.action.description"/>
 
             <!-- 编辑器右键: 复制选中代码的行范围引用到剪贴板 -->
             <action
                 id="cn.codecrab.plugins.dsh.CopySelectionReferenceAction"
-                class="cn.codecrab.plugins.dsh.CopySelectionReferenceAction"
+                class="cn.codecrab.plugins.dsh.actions.CopySelectionReferenceAction"
                 text="cn.codecrab.plugins.dsh.CopySelectionReferenceAction.action.text"
                 description="cn.codecrab.plugins.dsh.CopySelectionReferenceAction.action.description"/>
 
@@ -62,14 +64,14 @@
             <!-- 项目视图右键: 发送文件路径引用到 Dsh 输入框 -->
             <action
                 id="cn.codecrab.plugins.dsh.SendFileToDshAction"
-                class="cn.codecrab.plugins.dsh.SendFileToDshAction"
+                class="cn.codecrab.plugins.dsh.actions.SendFileToDshAction"
                 text="cn.codecrab.plugins.dsh.SendFileToDshAction.action.text"
                 description="cn.codecrab.plugins.dsh.SendFileToDshAction.action.description"/>
 
             <!-- 项目视图右键: 复制文件路径引用到剪贴板 -->
             <action
                 id="cn.codecrab.plugins.dsh.CopyFileReferenceAction"
-                class="cn.codecrab.plugins.dsh.CopyFileReferenceAction"
+                class="cn.codecrab.plugins.dsh.actions.CopyFileReferenceAction"
                 text="cn.codecrab.plugins.dsh.CopyFileReferenceAction.action.text"
                 description="cn.codecrab.plugins.dsh.CopyFileReferenceAction.action.description"/>
 

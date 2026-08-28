@@ -11,6 +11,26 @@ Dsh Dock 是一个 IntelliJ IDEA 插件：一键启动 DeepSeek Harness（`dsh w
 - 构建：`gradlew buildPlugin`（需要 JDK 17+ 的 Gradle 运行环境；本机 JDK 路径、构建方式等个性化配置见 **AGENTS.local.md**）
 - 开源地址：<https://gitee.com/kkcoco/dsh-idea-plugin>（`gradle.properties` 的 `pluginRepositoryUrl`）
 
+## 源码结构（包划分）
+
+源码根包为 `cn.codecrab.plugins.dsh`（与插件 id 一致），按职责拆分子包：
+
+```text
+src/main/kotlin/cn/codecrab/plugins/dsh/
+├── DshBundle.kt     # 根包：i18n 资源束入口（对应 resources/messages/DshBundle*.properties）
+├── actions/         # 菜单动作（Tools 菜单 / 编辑器右键 / 项目视图右键的 AnAction）
+├── reference/       # @路径 引用构造与 IDEA↔dsh 路径转换
+├── toolwindow/      # 工具窗口：工厂 / 内容面板（内嵌 JCEF 浏览器）/ 面板注册表
+├── settings/        # 设置持久化（DshSettingsState）与设置页（DshSettingsConfigurable）
+├── server/          # dsh 进程生命周期（启动/停止/退出清理/版本探测）
+├── sync/            # dsh→IDEA 文件同步（事件流监听 + VFS 刷新）
+├── workspace/       # dsh /api RPC 客户端（工作空间同步、语言偏好）
+└── util/            # 通用工具（WSL 路径、剪贴板、跨版本 Disposer 桥）
+```
+
+- 新增类放入对应职责的包；移动类后必须同步更新 `plugin.xml` 里的 `class` / `factoryClass` / `serviceImplementation` / `instance` 全限定类名；
+- action 的 `id` 与 text/description 资源 key（如 `cn.codecrab.plugins.dsh.SendFileToDshAction.action.text`）是**稳定标识**，与类所在包无关：移动/改名类时保持不变，否则用户的快捷键绑定与既有配置会失效。
+
 ## 本机个性化配置（AGENTS.local.md）
 
 - 机器相关的个性化配置（JDK 路径、构建工具、IDE 位置等）统一写在仓库根目录的 **`AGENTS.local.md`**；

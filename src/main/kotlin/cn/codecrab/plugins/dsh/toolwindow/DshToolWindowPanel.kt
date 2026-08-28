@@ -1,5 +1,14 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.toolwindow
 
+import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.reference.DshReference
+import cn.codecrab.plugins.dsh.server.DshServer
+import cn.codecrab.plugins.dsh.settings.DshSettingsConfigurable
+import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.sync.DshEditorSync
+import cn.codecrab.plugins.dsh.util.DshDisposer
+import cn.codecrab.plugins.dsh.util.WslSupport
+import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
@@ -838,18 +847,18 @@ class DshToolWindowPanel(
         try {
             val group = NotificationGroupManager.getInstance().getNotificationGroup("Dsh")
             val content = when {
-                nodeMissing -> if (settings.launchMode == "wsl") {
+                nodeMissing -> if (settings.launchMode == DshSettingsState.MODE_WSL) {
                     DshBundle.message("notify.fail.nodeMissing.wsl")
                 } else {
                     DshBundle.message("notify.fail.nodeMissing.windows")
                 }
-                missingDsh -> if (settings.launchMode == "wsl") {
+                missingDsh -> if (settings.launchMode == DshSettingsState.MODE_WSL) {
                     DshBundle.message("notify.fail.dshMissing.wsl")
                 } else {
                     DshBundle.message("notify.fail.dshMissing.windows")
                 }
                 wslError -> DshBundle.message("notify.fail.wslError")
-                else -> if (settings.launchMode == "wsl") {
+                else -> if (settings.launchMode == DshSettingsState.MODE_WSL) {
                     DshBundle.message("notify.fail.generic.wsl", settings.currentPort().toString())
                 } else {
                     DshBundle.message("notify.fail.generic.windows", settings.currentPort().toString())

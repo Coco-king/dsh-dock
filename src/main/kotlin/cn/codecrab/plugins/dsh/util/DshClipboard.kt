@@ -1,4 +1,4 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.util
 
 import com.intellij.openapi.diagnostic.Logger
 import java.awt.Toolkit

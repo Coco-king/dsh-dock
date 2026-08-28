@@ -1,4 +1,4 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.settings
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent
@@ -18,7 +18,7 @@ import com.intellij.openapi.components.Storage
 class DshSettingsState : PersistentStateComponent<DshSettingsState> {
 
     /** 启动方式: "windows" = 直接在 Windows 启动 (默认); "wsl" = 在 WSL 中启动 */
-    var launchMode: String = "windows"
+    var launchMode: String = MODE_WINDOWS
 
     /** WSL 模式: dsh web 监听端口 (默认 3080, 与官方 dsh web 默认端口一致) */
     var wslPort: Int = WSL_DEFAULT_PORT
@@ -48,10 +48,10 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     var forceLocale: String = ""
 
     /** 指定启动方式对应的端口 */
-    fun portFor(mode: String): Int = if (mode == "wsl") wslPort else windowsPort
+    fun portFor(mode: String): Int = if (mode == MODE_WSL) wslPort else windowsPort
 
     /** 指定启动方式对应的附加参数 */
-    fun extraArgsFor(mode: String): String = if (mode == "wsl") wslExtraDshArgs else windowsExtraDshArgs
+    fun extraArgsFor(mode: String): String = if (mode == MODE_WSL) wslExtraDshArgs else windowsExtraDshArgs
 
     /** 当前选中的启动方式对应的端口 */
     fun currentPort(): Int = portFor(launchMode)

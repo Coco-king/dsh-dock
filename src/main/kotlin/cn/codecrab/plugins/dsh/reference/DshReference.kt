@@ -1,5 +1,7 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.reference
 
+import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.util.WslSupport
 import com.intellij.openapi.vfs.VirtualFile
 
 /**
@@ -25,7 +27,7 @@ object DshReference {
     fun dshPathFromString(path: String?, launchMode: String): String? {
         if (path.isNullOrBlank()) return null
         val raw = path.replace('\\', '/')
-        return if (launchMode == "wsl") WslSupport.toWslPath(raw) ?: raw else raw
+        return if (launchMode == DshSettingsState.MODE_WSL) WslSupport.toWslPath(raw) ?: raw else raw
     }
 
     /** 文件引用: `@<path>` */

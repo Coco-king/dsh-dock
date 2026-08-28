@@ -1,5 +1,8 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.server
 
+import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.util.WslSupport
 import com.intellij.ide.AppLifecycleListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -155,7 +158,7 @@ object DshServer {
             return
         }
         when (mode) {
-            "windows" -> launchOnWindows(projectPath, port, extraArgs, onLog)
+            DshSettingsState.MODE_WINDOWS -> launchOnWindows(projectPath, port, extraArgs, onLog)
             else -> {
                 if (!WslSupport.isWindows) {
                     onLog(DshBundle.message("server.log.wslModeUnavailable"))
@@ -272,7 +275,7 @@ object DshServer {
             crlf = true
         )
         onLog(DshBundle.message("server.log.wslWorkdir", wslProject ?: DshBundle.message("server.param.wslHome")))
-        startWrapper(cmdFile, onLog, port, "wsl")
+        startWrapper(cmdFile, onLog, port, DshSettingsState.MODE_WSL)
     }
 
     // ---------- Windows 直接启动 ----------
@@ -381,7 +384,7 @@ object DshServer {
                 else DshBundle.message("server.param.default")
             )
         )
-        startWrapper(cmdFile, onLog, port, "windows")
+        startWrapper(cmdFile, onLog, port, DshSettingsState.MODE_WINDOWS)
     }
 
     /** 通过隐藏的 PowerShell 执行 .cmd, 并挂上输出/进程 watching 和端口轮询 */
@@ -712,7 +715,7 @@ object DshServer {
      *  - Windows 模式: taskkill 终止本插件持有的启动包装进程树
      */
     private fun prepareStopScript(port: Int, mode: String): String {
-        return if (mode == "windows") {
+        return if (mode == DshSettingsState.MODE_WINDOWS) {
             val pid = process?.pid() ?: 0L
             val cmd = WslSupport.createTempFile("dsh-stop-", ".cmd")
             WslSupport.writeTextFile(cmd, "@echo off\r\ntaskkill /PID $pid /T /F >nul 2>&1\r\n", crlf = true)

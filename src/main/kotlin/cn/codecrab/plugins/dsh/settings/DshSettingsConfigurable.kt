@@ -1,5 +1,6 @@
-package cn.codecrab.plugins.dsh
+package cn.codecrab.plugins.dsh.settings
 
+import cn.codecrab.plugins.dsh.DshBundle
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.util.NlsContexts
 import com.intellij.ui.JBColor
