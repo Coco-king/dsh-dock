@@ -30,6 +30,7 @@ class DshSettingsConfigurable : Configurable {
     private val settings = DshSettingsState.getInstance()
 
     private var autoStartField: JCheckBox? = null
+    private var startOnIdeStartupField: JCheckBox? = null
     private var openExternalField: JCheckBox? = null
     private var syncEditedFilesField: JCheckBox? = null
     private var themeFollowField: JCheckBox? = null
@@ -62,6 +63,7 @@ class DshSettingsConfigurable : Configurable {
         }
 
         autoStartField = JCheckBox(DshBundle.message("settings.autoStart"))
+        startOnIdeStartupField = JCheckBox(DshBundle.message("settings.startOnIdeStartup"))
         openExternalField = JCheckBox(DshBundle.message("settings.openExternalBrowser"))
         syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles"))
         themeFollowField = JCheckBox(DshBundle.message("settings.themeFollow"))
@@ -91,6 +93,7 @@ class DshSettingsConfigurable : Configurable {
         // 布局: 通用选项 -> 启动方式 (每个启动选项下缩进放置对应的端口/附加参数) -> 语言 -> 提示
         var y = 0
         y = fullWidth(y, autoStartField!!)
+        y = fullWidth(y, startOnIdeStartupField!!)
         y = fullWidth(y, openExternalField!!)
         y = fullWidth(y, syncEditedFilesField!!)
         y = fullWidth(y, themeFollowField!!)
@@ -147,6 +150,7 @@ class DshSettingsConfigurable : Configurable {
     override fun isModified(): Boolean {
         val s = settings
         return autoStartField?.isSelected != s.autoStart ||
+            startOnIdeStartupField?.isSelected != s.startOnIdeStartup ||
             openExternalField?.isSelected != s.openExternalBrowser ||
             syncEditedFilesField?.isSelected != s.syncEditedFiles ||
             themeFollowField?.isSelected != s.themeFollowIde ||
@@ -161,6 +165,7 @@ class DshSettingsConfigurable : Configurable {
     override fun apply() {
         val s = settings
         s.autoStart = autoStartField?.isSelected ?: s.autoStart
+        s.startOnIdeStartup = startOnIdeStartupField?.isSelected ?: s.startOnIdeStartup
         s.openExternalBrowser = openExternalField?.isSelected ?: s.openExternalBrowser
         s.syncEditedFiles = syncEditedFilesField?.isSelected ?: s.syncEditedFiles
         s.themeFollowIde = themeFollowField?.isSelected ?: s.themeFollowIde
@@ -184,6 +189,7 @@ class DshSettingsConfigurable : Configurable {
     override fun reset() {
         val s = settings
         autoStartField?.isSelected = s.autoStart
+        startOnIdeStartupField?.isSelected = s.startOnIdeStartup
         openExternalField?.isSelected = s.openExternalBrowser
         syncEditedFilesField?.isSelected = s.syncEditedFiles
         themeFollowField?.isSelected = s.themeFollowIde
@@ -208,6 +214,7 @@ class DshSettingsConfigurable : Configurable {
 
     override fun disposeUIResources() {
         autoStartField = null
+        startOnIdeStartupField = null
         openExternalField = null
         syncEditedFilesField = null
         themeFollowField = null

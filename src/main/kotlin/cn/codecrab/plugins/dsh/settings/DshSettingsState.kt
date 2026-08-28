@@ -35,6 +35,9 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     /** 打开工具窗口时自动启动 */
     var autoStart: Boolean = true
 
+    /** IDEA 启动 (本次会话首次打开项目) 时自动启动 dsh: 提前预热, 缩短首次打开工具窗口的等待时间 */
+    var startOnIdeStartup: Boolean = false
+
     /** WebUI 就绪后同时用系统浏览器打开 */
     var openExternalBrowser: Boolean = false
 
@@ -68,6 +71,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
         windowsPort = state.windowsPort
         windowsExtraDshArgs = state.windowsExtraDshArgs
         autoStart = state.autoStart
+        startOnIdeStartup = state.startOnIdeStartup
         openExternalBrowser = state.openExternalBrowser
         syncEditedFiles = state.syncEditedFiles
         themeFollowIde = state.themeFollowIde

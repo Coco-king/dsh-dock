@@ -1,5 +1,15 @@
 # Changelog / 变更日志
 
+## [Unreleased]
+
+### 中文 (Chinese)
+
+- **新增（Added）**：新增「IDEA 启动时自动启动 dsh」开关（默认关闭）：开启后，IDE 打开项目即在后台提前启动 dsh，首次打开 Dsh Dock 窗口时 WebUI 已就绪，等待时间显著缩短；IDE 退出时 dsh 一并自动停止
+
+### English
+
+- **Added**: New "Start dsh automatically when IDEA starts" toggle (off by default): once enabled, dsh is started in the background as soon as the IDE opens a project, so the WebUI is already ready the first time you open the Dsh Dock window — much less waiting; dsh stops automatically when the IDE exits
+
 ## [1.0.3] - 2026-08-27
 
 ### 中文 (Chinese)

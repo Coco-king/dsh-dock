@@ -24,6 +24,13 @@
             instance="cn.codecrab.plugins.dsh.settings.DshSettingsConfigurable"/>
     </extensions>
 
+    <!-- 应用级监听: 「IDEA 启动时自动启动 dsh」(设置开启时, 本次会话首次打开项目即在后台预热 dsh) -->
+    <applicationListeners>
+        <listener
+            class="cn.codecrab.plugins.dsh.server.DshIdeStartupListener"
+            topic="com.intellij.openapi.project.ProjectManagerListener"/>
+    </applicationListeners>
+
     <!-- action 的 id 与 text/description 资源 key 是稳定标识 (与类所在包无关):
          改 id 会丢失用户已绑定的快捷键, 改 key 需同步 properties 文件, 重构移动类时保持不变 -->
     <actions>
