@@ -9,7 +9,7 @@ Dsh Dock 是一个 IntelliJ IDEA 插件：一键启动 DeepSeek Harness（`dsh w
 - 语言：Kotlin（JVM target 11，编译 JDK 21）
 - 兼容：IntelliJ IDEA 2022.3 (223) 及以上（`pluginSinceBuild = 223`，无版本上限）
 - 构建：`gradlew buildPlugin`（需要 JDK 17+ 的 Gradle 运行环境；本机 JDK 路径、构建方式等个性化配置见 **AGENTS.local.md**）
-- 开源地址：<https://gitee.com/kkcoco/dsh-idea-plugin>（`gradle.properties` 的 `pluginRepositoryUrl`）
+- 开源地址：GitHub <https://github.com/Coco-king/dsh-dock>（`gradle.properties` 的 `pluginRepositoryUrl`）· Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 ## 源码结构（包划分）
 

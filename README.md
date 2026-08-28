@@ -22,7 +22,7 @@ no terminal or separate browser needed.
 6. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
 7. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2022.3 and later
-8. **Open source**: <https://gitee.com/kkcoco/dsh-idea-plugin>
+8. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 9. **Auto-refresh after dsh edits**: Listens to dsh's session event stream; when a file-writing
    tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
    editors update to the new content immediately — no more stale code or reopening files
@@ -43,14 +43,14 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
 6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
 7. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2022.3 及之后版本
-8. **项目开源**：<https://gitee.com/kkcoco/dsh-idea-plugin>
+8. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 9. **dsh 编辑后自动刷新**：监听 dsh 会话事件流，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
 <!-- Plugin description end -->
 
 ## 开源地址
 
-项目开源：<https://gitee.com/kkcoco/dsh-idea-plugin>，欢迎 Star、提交 Issue / PR。
+项目开源：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>，欢迎 Star、提交 Issue / PR。
 
 ## 功能
 

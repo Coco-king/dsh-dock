@@ -2,7 +2,7 @@
 <idea-plugin>
     <id>cn.codecrab.plugins.dsh</id>
     <name>Dsh Dock</name>
-    <vendor email="codecrab@example.com" url="https://github.com/deepseek-ai/deepseek-harness">codecrab</vendor>
+    <vendor email="codecrab.cn@gmail.com" url="https://github.com/Coco-king/dsh-dock">codecrab</vendor>
 
     <!-- 仅依赖平台模块, 可在所有 JetBrains IDE 中安装 -->
     <depends>com.intellij.modules.platform</depends>
