@@ -4,21 +4,21 @@
 
 ### 中文 (Chinese)
 
-- **新增（Added）**：新增「自动启动」设置（默认 IDEA 启动时）：IDE 启动即在后台预热 dsh 与内嵌浏览器页面，首次打开 Dsh Dock 窗口几乎无需等待；可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止
+- **新增（Added）**：新增「自动启动」设置：IDE 启动时后台预热 dsh 与内嵌浏览器，首次打开工具窗口几乎无需等待，退出时随 IDE 一并停止
 - **新增（Added）**：工具窗口日志每行增加毫秒级时间戳
-- **变更（Changed）**：启动 dsh 固定附加 `--no-open`（不再探测版本），启动更快（需 dsh 0.1.0-rc.8+）
+- **变更（Changed）**：启动 dsh 固定附加 `--no-open`，启动更快（需 dsh 0.1.0-rc.8+）
 - **变更（Changed）**：「刷新」立即重载页面，工作空间同步转后台，不再卡顿数秒
 - **修复（Fixed）**：修复上次退出未关闭 Dsh Dock 窗口时，下次启动窗口一直空白的问题
-- **修复（Fixed）**：兼容新版 dsh（0.1.2-alpha 起）的 WebUI 安全认证与重构后的 API/事件机制——插件自动识别并携带启动令牌，工作空间同步、界面语言跟随自动适配新版接口并兼容旧版 dsh；dsh 编辑文件后编辑器即时刷新（新版走实时监听通道，旧版保持原有事件流），右键菜单发送文件/代码引用在新版输入框上同样生效（此前升级 dsh 后这些功能失效、页面停在认证页）
+- **修复（Fixed）**：兼容新版 dsh（0.1.2-alpha 起）的认证与接口变化，恢复工作空间同步、语言跟随，dsh 编辑文件后编辑器即时刷新；右键发送文件/代码引用同样可用（旧版 dsh 不受影响）
 
 ### English
 
-- **Added**: New "Auto-start" setting (defaults to when the IDE starts): dsh and the embedded browser page are warmed up at IDE startup, so the first open of the Dsh Dock window needs virtually no wait; switchable to when the tool window opens or manual; dsh stops automatically when the IDE exits
+- **Added**: New "Auto-start" setting: dsh and the embedded browser are warmed up at IDE startup, so the first open of the tool window needs virtually no wait, and dsh stops along with the IDE
 - **Added**: Millisecond timestamps in the tool window log
-- **Changed**: `--no-open` is now always appended when starting dsh (no version probing), making startup faster (requires dsh 0.1.0-rc.8+)
+- **Changed**: `--no-open` is now always appended when starting dsh, making startup faster (requires dsh 0.1.0-rc.8+)
 - **Changed**: Refresh now reloads the page immediately with the workspace sync moved to the background
 - **Fixed**: Fixed the Dsh Dock window staying empty after an IDE restart when it was left open at the previous shutdown
-- **Fixed**: Compatibility with the new dsh web (0.1.2-alpha onward) WebUI security authentication and its reworked API/event mechanism — the plugin now detects and carries the launch token automatically, and adapts workspace sync and UI-language following to the new interface while staying compatible with older dsh versions; editors refresh immediately after dsh edits files (via a real-time listening channel on the new version, keeping the legacy event stream on older ones), and sending file/code references via the context menu works on the new input box too (after upgrading dsh these features were broken and the page stopped at the authentication page)
+- **Fixed**: Compatibility with the new dsh web (0.1.2-alpha onward) authentication and API changes, restoring workspace sync and language following; editors refresh immediately after dsh edits files, and sending file/code references via the context menu works again (older dsh versions are unaffected)
 
 ## [1.0.3] - 2026-08-27
 
