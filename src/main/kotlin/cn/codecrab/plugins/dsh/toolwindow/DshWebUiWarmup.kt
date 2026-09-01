@@ -231,8 +231,10 @@ object DshWebUiWarmup {
                         warmed = w
                     }
                     jbClient.addLoadHandler(handler, b.cefBrowser)
-                    log(DshBundle.message("log.warmup.loading", DshServer.webUrl(port)))
-                    b.loadURL(DshServer.webUrl(port))
+                    // 新版 dsh 的 WebUI 首页需带启动令牌访问 (换取认证 cookie)
+                    val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+                    log(DshBundle.message("log.warmup.loading", url))
+                    b.loadURL(url)
                     // 保险: 首次 loadURL 偶发未生效 (JCEF 初始化竞态) 时页面停在 about:blank,
                     // onLoadEnd 永远不会置位加载完成标记 —— 8s 后仍未完成则重试一次。
                     // 浏览器已被面板接管 (taken) 时加载职责归面板, 且预热 handler 已被摘除、
@@ -242,7 +244,8 @@ object DshWebUiWarmup {
                         loadRetry.stop()
                         if (!taken && !pageLoadedFlag.get()) {
                             try {
-                                b.loadURL(DshServer.webUrl(port))
+                                val retryUrl = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+                                b.loadURL(retryUrl)
                             } catch (_: Throwable) {
                             }
                         }

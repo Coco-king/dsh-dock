@@ -98,6 +98,9 @@ object DshServer {
 
     fun webUrl(port: Int): String = "http://localhost:$port/"
 
+    /** WebUI 地址 (带当前 dsh 进程的启动令牌, 用于通过新版 dsh 的浏览器认证); 令牌未捕获时返回 null */
+    fun webTokenUrl(port: Int): String? = DshWebAuth.webTokenUrl(port)
+
     fun isRunning(): Boolean = state == State.RUNNING
 
     /**
@@ -174,6 +177,8 @@ object DshServer {
             onLog(DshBundle.message("server.log.startCancelled"))
             return
         }
+        // 新进程会产生新的启动令牌: 清空上一进程的认证状态
+        DshWebAuth.reset()
         when (mode) {
             DshSettingsState.MODE_WINDOWS -> launchOnWindows(projectPath, port, extraArgs, onLog)
             else -> {
@@ -431,7 +436,11 @@ object DshServer {
             Thread({
                 try {
                     stream.bufferedReader(Charsets.UTF_8).useLines { lines ->
-                        for (line in lines) onLog("$tag $line")
+                        for (line in lines) {
+                            // 新版 dsh 启动时打印带 token 的 WebUI 地址, 捕获令牌供浏览器/API 认证
+                            DshWebAuth.captureFromLogOutput(line)
+                            onLog("$tag $line")
+                        }
                     }
                 } catch (_: Exception) {
                 }
@@ -540,6 +549,8 @@ object DshServer {
                     process = null
                     stopCmdPath = null
                     ownerPidFileWsl = null
+                    // dsh 已停止: 清空浏览器认证状态 (新进程会打印新的启动令牌)
+                    DshWebAuth.reset()
                     setState(State.IDLE)
                 }
             }, "dsh-plugin-stop").apply { isDaemon = true }.start()
@@ -656,6 +667,7 @@ object DshServer {
                         process?.destroy()
                     } catch (_: Throwable) {
                     }
+                    DshWebAuth.reset()
                 } catch (_: Throwable) {
                 }
             }, "dsh-plugin-exit-cleanup").apply { isDaemon = true }.start()

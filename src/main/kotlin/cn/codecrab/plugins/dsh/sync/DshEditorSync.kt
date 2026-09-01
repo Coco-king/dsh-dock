@@ -1,8 +1,11 @@
 package cn.codecrab.plugins.dsh.sync
 
 import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.server.DshWebAuth
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.util.DshIdeName
+import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
+import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi.RpcStyle
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.intellij.openapi.application.ApplicationManager
@@ -25,21 +28,24 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * 监听 dsh 的会话事件流, 把 dsh 的文件写入同步到 IDEA。
+ * 监听 dsh 的会话事件, 把 dsh 的文件写入同步到 IDEA。
  *
  * 背景: dsh (尤其 WSL 模式) 编辑项目文件后, Windows 侧的文件变更通知经常不触发,
  * IDEA 的 VFS 不知道文件变了, 打开着的编辑器标签一直显示旧代码 (重新打开文件才更新)。
- * 本类通过 dsh 自带的 `/api/events.mux` 事件流监听 `tool/call` / `tool/result` 事件:
+ * 本类监听 dsh 的**写入类工具事件** (`tool/call` / `tool/result`):
  * 当 dsh 的**文件写入类工具** (str_replace_editor / edit / write 等) 成功执行完时,
  * 定向刷新该文件的 VFS, 并重载打开的、无未保存修改的文档 —— 编辑器立即显示新代码。
  *
- * 传输双通道按 dsh 版本降级:
- *  1. SSE: `GET /api/events.mux` (旧版 dsh, 如 0.1.1-rc.2)
- *  2. WebSocket: `ws://127.0.0.1:<port>/api/events.mux`, 不带 Origin 头
- *     (经 host 的 loopback 信任围栏放行, 与新版本 dsh 兼容)
- * 两类版本都连不上时静默降级 (只记一行日志), 绝不影响 WebUI 正常使用。
+ * 传输按 dsh 版本自适应:
+ *  1. 旧版事件流 (dsh ≤ 0.1.1):
+ *     - SSE: `GET /api/events.mux`; WebSocket: `ws://127.0.0.1:<port>/api/events.mux`,
+ *       不带 Origin 头 (经 loopback 信任围栏放行; 新版 dsh 的 /api 还需认证 cookie)
+ *  2. 新版轮询 (dsh ≥ 0.1.2-alpha, events.mux 已移除): 旧事件流连续失败若干次后自动切换
+ *     —— 周期性 `session/list` 对比各会话 seq 游标, 有前进时用 `session/page` 增量拉取
+ *     工具事件 (RPC 走 DshWorkspaceApi 的 Remote 风格适配)。
+ * 两类方式都不可用时静默降级 (只记一行日志), 绝不影响 WebUI 正常使用。
  *
- * 线程模型: 每个面板一个监听线程 (阻塞读流), 断线按退避自动重连;
+ * 线程模型: 每个面板一个监听线程 (阻塞读流 / 轮询循环), 断线按退避自动重连;
  * 事件回调里只做解析与入队, 涉 VFS 的 I/O 在监听线程执行, 文档重载切到 EDT。
  */
 class DshEditorSync(
@@ -80,8 +86,14 @@ class DshEditorSync(
     /** 连续连接失败次数 (达到上限则判定"当前 dsh 不支持事件流", 停止重试) */
     private var consecutiveFailures = 0
 
-    /** 失败日志节流: 同一错误信息最多每分钟记一次 */
-    private var lastFailLogAt = 0L
+    /** 已切换到轮询模式 (新版 dsh: 无 events.mux 事件流, 改用 session/page RPC 轮询) */
+    private var polling = false
+
+    /** 轮询模式下的会话 seq 游标: sessionId -> 已消费到的 projections.asOfSeq */
+    private val pollCursors = HashMap<String, Long>()
+
+    /** 最近一次刷新某路径的时刻 (ms), 用于同路径短窗口去重 */
+    private val lastSyncAt = HashMap<String, Long>()
 
     /** 已在本周期输出过"连接成功"日志 (避免每次重连都刷) */
     private var connectedLogged = false
@@ -100,7 +112,15 @@ class DshEditorSync(
         subscribedLogged = false
         consecutiveFailures = 0
         reconnectBackoffMs = 0
+        polling = false
         pendingCalls.clear()
+        onceNotified.clear()
+        // 轮询游标跨 dsh/IDE 重启从设置恢复: 只同步 seq 前进的新事件, 不回放历史
+        pollCursors.clear()
+        val saved = DshSettingsState.getInstance().syncCursors
+        for ((sid, seq) in saved) {
+            pollCursors[sid] = seq.toLongOrNull() ?: 0L
+        }
         val t = Thread({ runLoop() }, "dsh-plugin-editor-sync").apply { isDaemon = true }
         thread = t
         t.start()
@@ -125,9 +145,26 @@ class DshEditorSync(
         }
     }
 
-    /** 监听主循环: 连接 -> 阻塞读流 -> 异常/断开 -> 退避重连 */
+    /** 监听主循环: 旧版事件流 -> 新版轮询模式; 断线按退避自动重连 */
     private fun runLoop() {
+        // 新版 dsh (0.1.2+) 没有 events.mux: 进主循环前先判定一次, 是则直接走轮询
+        if (isRemoteDsh()) {
+            applyOnce("poll-mode-notified") {
+                onLog(DshBundle.message("sync.log.pollMode"))
+            }
+            polling = true
+        }
         while (running.get() && !project.isDisposed) {
+            // 轮询模式: 每轮 RPC 循环之间短暂休眠
+            if (polling) {
+                try {
+                    Thread.sleep(POLL_INTERVAL_MS)
+                } catch (_: InterruptedException) {
+                    return
+                }
+                pollCycle()
+                continue
+            }
             if (reconnectBackoffMs > 0) {
                 try {
                     Thread.sleep(reconnectBackoffMs)
@@ -139,12 +176,108 @@ class DshEditorSync(
             val ok = tryConnectAndStream()
             if (!running.get()) return
             consecutiveFailures = if (ok) 0 else consecutiveFailures + 1
+            // 旧版事件流连不上且 dsh 是新版 (0.1.2+, /api 为 Remote 风格, events.mux 已移除):
+            // 切换到轮询模式, 用 session/page RPC 增量拉取工具事件
+            if (consecutiveFailures >= LEGACY_FAILURES_BEFORE_POLL && isRemoteDsh()) {
+                applyOnce("poll-mode-notified") {
+                    onLog(DshBundle.message("sync.log.pollMode"))
+                }
+                polling = true
+                connectedLogged = false
+                continue
+            }
             if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                 throttledLog(DshBundle.message("sync.log.unsupported"))
                 running.set(false)
                 return
             }
             reconnectBackoffMs = minOf(reconnectBackoffMs * 2, 15_000L)
+        }
+    }
+
+    /** dsh 是否为新版 Remote RPC 风格 (探测失败即视为不是, 继续旧路径重试) */
+    private fun isRemoteDsh(): Boolean {
+        // 主动触发一次探测 (session/list 走 Remote 格式)
+        DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 3000)
+        return DshWorkspaceApi.rpcStyle(port) == RpcStyle.REMOTE
+    }
+
+    /**
+     * 轮询模式一轮: session.list 找 seq 前进的会话, 用 session/page 拉取新增的
+     * 工具调用/结果事件 (新版 dsh 移除了 events.mux 事件流, 会话事件只能按 seq 增量拉)。
+     */
+    private fun pollCycle() {
+        try {
+            val list = DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 4000) ?: return
+            val items = list.getAsJsonArray("items") ?: return
+            for (el in items) {
+                if (!running.get()) return
+                val o = el.asJsonObject ?: continue
+                val sid = o.get("sessionId")?.asString ?: continue
+                val cursor = o.getAsJsonObject("projections")?.get("asOfSeq")?.asLong ?: continue
+                val last = pollCursors[sid] ?: -1L
+                if (cursor <= last) continue
+                if (last == -1L) {
+                    // 首次见该会话 (进程刚启动 / dsh 重启出现新会话): 只建立基线游标,
+                    // 不回放历史事件, 之后只同步 seq 前进的新增事件 (避免启动时刷屏"已同步")
+                    debugLog("轮询: 会话 $sid 建立基线 seq $cursor (不回放历史)")
+                    updateCursor(sid, cursor)
+                    continue
+                }
+                updateCursor(sid, cursor)
+                // 传入旧基线做 seq 过滤: page 返回的是窗口(可能重叠), 只处理 seq 超过基线的新事件
+                debugLog("轮询: 会话 $sid seq $last -> $cursor")
+                try {
+                    fetchSessionEvents(sid, cursor, last)
+                } catch (t: Throwable) {
+                    LOG.warn("session.page failed for $sid", t)
+                }
+            }
+        } catch (t: Throwable) {
+            if (running.get()) throttledLog(DshBundle.message("sync.log.pollFailed", t.message ?: "null"))
+        }
+    }
+
+    /** 更新会话游标并持久化到设置 (轮询线程调用; 写 settings 内存 map, IDEA 定时落盘) */
+    private fun updateCursor(sessionId: String, cursor: Long) {
+        pollCursors[sessionId] = cursor
+        try {
+            DshSettingsState.getInstance().syncCursors[sessionId] = cursor.toString()
+        } catch (_: Throwable) {
+        }
+    }
+
+
+    /**
+     * 拉取会话新增事件 (seq 超过 [lastSeen] 的), 识别文件写入工具调用/结果。
+     * page 返回的是"throughSeq 前最近一段"窗口, 可能与本会话已处理的区间重叠,
+     * 因此用 [lastSeen] 过滤 seq, 保证每个事件只消费一次 —— 避免同批事件在连续轮询中被重复刷新。
+     */
+    private fun fetchSessionEvents(sessionId: String, throughSeq: Long, lastSeen: Long) {
+        // 用 Gson 对象构造 payload, 避免手拼 JSON 出错 (remoteTransform 的 REQUEST 分支会再包一层 request)
+        val address = JsonObject().apply {
+            addProperty("kind", "session")
+            addProperty("sessionId", sessionId)
+        }
+        val request = JsonObject().apply {
+            add("address", address)
+            addProperty("throughSeq", throughSeq)
+            addProperty("maxMessages", 100)
+        }
+        val page = DshWorkspaceApi.callJson(port, "session.page", request, 4000) ?: return
+        val records = page.getAsJsonArray("records") ?: return
+        for (rec in records) {
+            if (!running.get()) return
+            val r = rec.asJsonObject ?: continue
+            if (r.get("type")?.asString != "event") continue // chunks 等记录跳过
+            val event = r.getAsJsonObject("event") ?: continue
+            val seq = event.get("seq")?.asLong ?: continue
+            if (seq <= lastSeen) continue // 已消费过的旧事件 (窗口重叠), 跳过
+            val data = event.get("data")?.takeIf { it.isJsonObject }?.asJsonObject ?: continue
+            when (event.get("type")?.asString) {
+                "tool/call" -> onToolCall(sessionId, data)
+                "tool/result" -> onToolResult(sessionId, data)
+            }
         }
     }
 
@@ -157,6 +290,16 @@ class DshEditorSync(
         return tryWsStream()
     }
 
+    /**
+     * 新版 dsh (0.1.2+) 的 /api 需要浏览器认证 cookie: 先等启动令牌 (通常端口就绪后
+     * 几百毫秒随 dsh 输出到达) 再换取; 旧版 dsh (无认证) 返回 null, 按原样连接。
+     */
+    private fun authCookie(): String? {
+        DshWebAuth.cookieHeader(port)?.let { return it }
+        if (DshWebAuth.awaitToken(2000)) return DshWebAuth.cookieHeader(port)
+        return null
+    }
+
     /** 挂起线程直到新帧到达 */
     private fun trySseStream(): Boolean {
         var conn: HttpURLConnection? = null
@@ -165,6 +308,8 @@ class DshEditorSync(
             conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 3000
             conn.readTimeout = 0
+            // 新版 dsh (0.1.2+) 需要浏览器认证 cookie, 否则 401
+            authCookie()?.let { conn.setRequestProperty("Cookie", it) }
             sseConn = conn
             val code = conn.responseCode
             if (code != 200) return false
@@ -231,7 +376,10 @@ class DshEditorSync(
             val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()
             // 注意: java.net.http 的 WebSocket.Builder 没有单独 uri() 方法,
             // URI 直接传给 buildAsync(uri, listener)
-            val w = client.newWebSocketBuilder()
+            val builder = client.newWebSocketBuilder()
+            // 新版 dsh (0.1.2+) 握手需带浏览器认证 cookie, 否则 401 拒绝
+            authCookie()?.let { builder.header("Cookie", it) }
+            val w = builder
                 .buildAsync(URI("ws://127.0.0.1:$port/api/events.mux"), listener)
                 .get(4, TimeUnit.SECONDS)
             if (!running.get()) {
@@ -261,11 +409,16 @@ class DshEditorSync(
         onLog(DshBundle.message("sync.log.connected", DshIdeName.productName(), transport))
     }
 
-    /** 节流日志: 同一条消息每分钟最多输出一次 (防重连风暴刷屏日志面板) */
+    /** 节流日志: 每条消息各自 60s 内最多输出一次 (防重连风暴刷屏; 不同消息互不吞并) */
+    private val lastFailPerMessage = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     private fun throttledLog(message: String) {
         val now = System.currentTimeMillis()
-        if (now - lastFailLogAt < 60_000) return
-        lastFailLogAt = now
+        val prev = lastFailPerMessage.putIfAbsent(message, now)
+        if (prev != null) {
+            if (now - prev < 60_000) return
+            lastFailPerMessage[message] = now
+        }
         LOG.warn(message)
         onLog(message)
     }
@@ -273,6 +426,13 @@ class DshEditorSync(
     /** 调试日志: 只写 IDE 日志 (idea.log, 带 [同步] 前缀可 grep), 不刷工具窗口日志面板 */
     private fun debugLog(message: String) {
         LOG.info(message)
+    }
+
+    /** 每个生命周期内只执行一次 (start 时重置) 的通知标记 */
+    private val onceNotified = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private inline fun applyOnce(key: String, block: () -> Unit) {
+        if (onceNotified.add(key)) block()
     }
 
     /** 解析一帧 server-request JSON, 识别文件写入工具的调用/结果 */
@@ -308,7 +468,13 @@ class DshEditorSync(
             debugLog("工具调用 name=$name (非写入工具, 忽略)")
             return
         }
-        val argsText = data.get("arguments")?.asString
+        val argsText = data.get("arguments")?.let { argsElement ->
+            when {
+                argsElement.isJsonPrimitive -> argsElement.asString
+                argsElement.isJsonObject -> argsElement.toString() // 新版可能直接给对象, 序列化为 JSON 字符串再解析
+                else -> null
+            }
+        }
         if (argsText == null) {
             debugLog("工具调用 name=$name callId=$callId 参数不是字符串: ${data.get("arguments")}")
             return
@@ -391,10 +557,25 @@ class DshEditorSync(
     }
 
     /** 刷新文件 VFS 并在编辑器打开且无未保存修改时重载文档 (均有兜底, 失败只记日志) */
+    /** 同一路径在窗口内 (2s) 已刷新过则跳过: dsh 的一次编辑可能拆成多个写入事件,
+     * 只对文件做一次 VFS 刷新即可 (避免同路径连续多条"已同步"刷屏) */
+    private fun shouldRefresh(path: String): Boolean {
+        val now = System.currentTimeMillis()
+        val last = lastSyncAt[path]
+        if (last != null && now - last < LAST_SYNC_MIN_INTERVAL_MS) return false
+        lastSyncAt[path] = now
+        return true
+    }
+
     private fun syncFileToIde(dshPath: String) {
         val ideaPath = ideaPathOf(dshPath)
         if (ideaPath == null) {
             debugLog("路径无法换算为 Windows 路径, 跳过: $dshPath")
+            return
+        }
+        // 同路径短窗口内只刷一次 (同一批写入事件合并) —— 既不刷屏, 也减少 VFS 压力
+        if (!shouldRefresh(ideaPath)) {
+            debugLog("同路径 $ideaPath 短期已刷新, 合并跳过")
             return
         }
         debugLog("换算为 IDEA 路径: $ideaPath")
@@ -451,6 +632,15 @@ class DshEditorSync(
 
         /** 连续失败多少次后判定"当前 dsh 不支持事件流", 停止重试 */
         private const val MAX_CONSECUTIVE_FAILURES = 5
+
+        /** 事件流连续失败达到该次数且 dsh 是新版 Remote 风格时, 切换到轮询模式 */
+        private const val LEGACY_FAILURES_BEFORE_POLL = 1
+
+        /** 轮询模式每轮间隔 (ms) */
+        private const val POLL_INTERVAL_MS = 2000L
+
+        /** 同一路径两次刷新的最小间隔 (ms): dsh 一次编辑可能拆多个写入事件, 窗口内合并为一次刷新 */
+        private const val LAST_SYNC_MIN_INTERVAL_MS = 2000L
 
         /** dsh 的文件写入类工具 (tool/call 的 data.name), 其余工具不触发同步 */
         private val WRITING_TOOLS = setOf(

@@ -106,3 +106,7 @@ src/main/kotlin/cn/codecrab/plugins/dsh/
 - Kotlin，注释与 KDoc 用中文；UI 用 Swing `GridBagLayout`（不引入三方 UI 库）；
 - 保持"不绑定本机路径"原则：WSL 发行版、NVM 路径等一律不配置、不持久化；
 - 提交信息用 `feat(scope): ……` 风格，正文可中英混排、要点式列出。
+- **JSON 一律对象化，禁止手拼 JSON 字符串**：
+  - **构造/序列化**统一用 Gson 对象（`JsonObject` / `JsonArray`，`addProperty` / `add`）后 `toString()`——禁止 `buildString` 拼 `"{\"...\"}"`、手写转义等（曾导致 `body is not JSON`、括号错乱、`parseString` 回退等 bug）；
+  - **dsh /api RPC 全程对象化**：信封（`type`/`rpcId`/`method`/`payload`）、RPC payload、新版 `args` 包装一律 `JsonObject` 构造；禁止新增字符串转义辅助方法（如 `jsonString`）；
+  - **反序列化**统一用 `JsonParser.parseString`（Gson 2.8.6+ 提供的静态方法，2022.3 起 IDE 均满足）。

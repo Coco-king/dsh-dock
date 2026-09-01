@@ -3,6 +3,7 @@ package cn.codecrab.plugins.dsh.toolwindow
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.reference.DshReference
 import cn.codecrab.plugins.dsh.server.DshServer
+import cn.codecrab.plugins.dsh.server.DshWebAuth
 import cn.codecrab.plugins.dsh.settings.DshSettingsConfigurable
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.sync.DshEditorSync
@@ -481,6 +482,9 @@ class DshToolWindowPanel(
 
         override fun onLoadEnd(browser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
             if (frame.isMain) {
+                // 新版 dsh 的 WebUI 需带启动令牌访问: 页面停在 401 认证页说明令牌不可用
+                // (如外部启动的 dsh), 提示用户用带 token 的地址打开或经插件重启
+                if (httpStatusCode == 401) appendLog(DshBundle.message("log.authRequired"))
                 pageLoaded = true
                 flushPendingReference()
                 // 工作空间同步失败时, 页面加载完成后自动刷新一次重试 (与手动刷新等效)
@@ -532,12 +536,13 @@ class DshToolWindowPanel(
     }
 
     /**
-     * 注入脚本: 在 WebUI 的 React 受控 <textarea> 上追加引用。
-     * dsh 的输入框是 React 受控组件, 直接改 value 会被 React 覆盖, 必须用
-     * 原生 value setter + 派发 input 事件让 React onChange 更新草稿。
-     * 元素用 `textarea[data-phase]` 定位 (dsh 输入框的稳定标记), 页面尚未挂载
-     * 完成时自动重试 (最多 20 次 x 250ms)。
-     * 注意: 每次都追加, 不做去重 —— 用户可能对同一段代码多次发送。
+     * 注入脚本: 在 WebUI 的输入框上追加引用。
+     * 兼容两代 dsh 输入框:
+     *  - 新版 (0.1.2+, Lexical contenteditable): 输入组件带 `data-phase`, 是 contenteditable 而非
+     *    textarea。受控状态只能通过触发 beforeinput 更新 —— 聚焦后 `document.execCommand('insertText')`
+     *    会触发 Lexical 的 beforeinput 处理, 草稿随之更新 (直接改 DOM 文本不会进 Lexical 状态);
+     *  - 旧版 (≤0.1.1, React 受控 textarea): `textarea[data-phase]`, 用原生 value setter + input 事件。
+     * 两种都找不到时自动重试 (最多 20 次 x 250ms)。注意: 每次都追加, 不做去重。
      */
     private fun buildInjectScript(reference: String): String {
         val refJs = DshWebUiInject.jsString(reference)
@@ -546,25 +551,53 @@ class DshToolWindowPanel(
             |  var REF = $refJs;
             |  var MAX_TRIES = 20;
             |  var tries = 0;
-            |  function inject() {
-            |    var all = document.querySelectorAll("textarea[data-phase]");
-            |    var ta = null;
-            |    for (var i = all.length - 1; i >= 0; i--) {
-            |      var c = all[i];
-            |      if (!c.disabled && !c.readOnly) { ta = c; break; }
-            |    }
-            |    if (!ta) {
-            |      if (tries++ < MAX_TRIES) { setTimeout(inject, 250); }
-            |      return;
-            |    }
+            |  function appendToTextarea(ta, text) {
             |    var cur = ta.value || "";
             |    var sep = cur.length === 0 ? "" : (/\s/.test(cur.charAt(cur.length - 1)) ? "" : " ");
-            |    var next = cur + sep + REF;
+            |    var next = cur + sep + text;
             |    var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
             |    setter.call(ta, next);
             |    ta.dispatchEvent(new Event("input", { bubbles: true }));
             |    ta.focus();
             |    try { ta.setSelectionRange(next.length, next.length); } catch (err) {}
+            |  }
+            |  function appendToContentEditable(ce, text) {
+            |    ce.focus();
+            |    try {
+            |      var cur = ce.textContent || "";
+            |      var sep = cur.length === 0 ? "" : (/\s/.test(cur.charAt(cur.length - 1)) ? "" : " ");
+            |      var sel = window.getSelection();
+            |      if (sel) { sel.selectAllChildren(ce); sel.collapseToEnd(); }
+            |      // 触发 beforeinput -> Lexical/受控编辑器更新草稿
+            |      var inserted = document.execCommand("insertText", false, sep + text);
+            |      if (inserted) return;
+            |    } catch (err) {}
+            |    // 兜底: 直接改文本 + input 事件 (普通 contenteditable 可生效)
+            |    ce.textContent = (ce.textContent || "") + text;
+            |    ce.dispatchEvent(new Event("input", { bubbles: true }));
+            |  }
+            |  function pickEditable() {
+            |    var all = document.querySelectorAll("[data-phase]");
+            |    for (var i = all.length - 1; i >= 0; i--) {
+            |      var el = all[i];
+            |      if (!el || el.nodeType !== 1) continue;
+            |      if (el.getAttribute && el.getAttribute("aria-disabled") === "true") continue;
+            |      if (el.isContentEditable || el.tabIndex >= 0) return el;
+            |    }
+            |    return null;
+            |  }
+            |  function inject() {
+            |    // 旧版 textarea 优先 (显式 textarea)
+            |    var ta = null;
+            |    var textareas = document.querySelectorAll("textarea[data-phase]");
+            |    for (var i = textareas.length - 1; i >= 0; i--) {
+            |      if (!textareas[i].disabled && !textareas[i].readOnly) { ta = textareas[i]; break; }
+            |    }
+            |    if (ta) { appendToTextarea(ta, REF); return; }
+            |    // 新版 contenteditable 输入框
+            |    var ce = pickEditable();
+            |    if (ce) { appendToContentEditable(ce, REF); return; }
+            |    if (tries++ < MAX_TRIES) { setTimeout(inject, 250); }
             |  }
             |  inject();
             |})();
@@ -625,12 +658,16 @@ class DshToolWindowPanel(
      * **只有当前活动窗口才同步工作空间, 非活动窗口不刷新页面、不抢占**共享 dsh 的"项目空间"。
      * 非活动窗口已显示的页面保持原样 (不会因其他窗口重启 dsh 而被整个刷掉):
      * 窗口重新获得焦点后由 [checkActivationResync] 再同步并切回自己的项目。
+     *
+     * 地址说明: 新版 dsh (0.1.2+) 的 WebUI 首页需带启动令牌访问 (换取认证 cookie),
+     * 页面加载优先用带令牌的地址 (令牌随 dsh 进程输出打印, 插件自动捕获);
+     * 令牌未捕获 (如外部启动的 dsh) 时退回普通地址, 页面会停在 dsh 的认证提示页。
      */
     private fun loadWebUi(loadFirst: Boolean = false) {
         val port = settings.currentPort()
-        val url = DshServer.webUrl(port)
         val projectPath = project.basePath
         if (projectPath == null) {
+            val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
             appendLog(DshBundle.message("log.loaded", url))
             browser?.loadURL(url)
             return
@@ -647,6 +684,7 @@ class DshToolWindowPanel(
         if (!loadInFlight.compareAndSet(false, true)) return
         if (loadFirst) {
             // 先立即重载页面, 让刷新按钮即时生效
+            val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
             appendLog(DshBundle.message("log.loaded", url))
             browser?.loadURL(url)
         }
@@ -654,6 +692,10 @@ class DshToolWindowPanel(
         Thread({
             var settled = false
             try {
+                // 新版 dsh 的启动令牌随进程输出到达, 通常比端口就绪晚几百毫秒:
+                // 等令牌后再决定加载地址, 避免页面首次加载就落在 401 认证页
+                if (DshServer.webTokenUrl(port) == null) DshWebAuth.awaitToken(3000)
+                val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
                 val dshPath = DshReference.dshPathFromString(projectPath, settings.launchMode)
                 // 端口刚就绪时 dsh 的 /api 可能还有一小段未就绪窗口: 小间隔重试同步 (约 8s 上限)
                 var result: DshWorkspaceApi.WorkspaceSyncResult? = null
@@ -792,18 +834,39 @@ class DshToolWindowPanel(
     }
 
     private fun openInSystemBrowser() {
-        val url = DshServer.webUrl(settings.currentPort())
-        if (WslSupport.isPortOpen(settings.currentPort())) {
-            desktopBrowse(url)
-            appendLog(DshBundle.message("log.openedExternal", url))
-        } else {
+        if (!WslSupport.isPortOpen(settings.currentPort())) {
             appendLog(DshBundle.message("log.notReadyStart", settings.currentPort().toString()))
             Messages.showWarningDialog(
                 project,
                 DshBundle.message("warn.dshNotStarted", settings.currentPort().toString()),
                 "Dsh Dock"
             )
+            return
         }
+        browseWebUiAsync()
+    }
+
+    /**
+     * 在系统浏览器打开 WebUI: 优先带启动令牌的地址 (新版 dsh 认证需要);
+     * 令牌尚未捕获时后台稍等再开, 避免系统浏览器停在认证页。
+     */
+    private fun browseWebUiAsync() {
+        val port = settings.currentPort()
+        val tokenUrl = DshServer.webTokenUrl(port)
+        if (tokenUrl != null) {
+            desktopBrowse(tokenUrl)
+            appendLog(DshBundle.message("log.openedExternal", tokenUrl))
+            return
+        }
+        Thread({
+            DshWebAuth.awaitToken(3000)
+            SwingUtilities.invokeLater {
+                if (project.isDisposed) return@invokeLater
+                val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+                desktopBrowse(url)
+                appendLog(DshBundle.message("log.openedExternal", url))
+            }
+        }, "dsh-plugin-browse-token-wait").apply { isDaemon = true }.start()
     }
 
     /** 跨版本安全: 不依赖平台 BrowserUtil (2024.2 已移除), 直接用 java.awt.Desktop */
@@ -856,7 +919,7 @@ class DshToolWindowPanel(
                         !externalBrowserOpenedForSession && !waitingForWarmup
                     ) {
                         externalBrowserOpenedForSession = true
-                        desktopBrowse(DshServer.webUrl(settings.currentPort()))
+                        browseWebUiAsync()
                         if (!jcefAvailable) {
                             appendLog(DshBundle.message("log.externalBrowserFallback"))
                         }

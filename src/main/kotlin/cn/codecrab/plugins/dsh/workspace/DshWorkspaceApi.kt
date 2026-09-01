@@ -1,5 +1,6 @@
 package cn.codecrab.plugins.dsh.workspace
 
+import cn.codecrab.plugins.dsh.server.DshWebAuth
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -17,20 +18,57 @@ import java.util.UUID
  * `recentWorkspace`), **与 dsh 进程的启动目录无关**。因此插件只靠 `cd <项目>` 无法让会话
  * 落在当前项目上 —— 需要在页面加载前通过 API 把项目工作空间注册出来并让它成为最近的。
  *
- * 传输格式 (与 dsh 客户端完全一致):
- *   POST /api/<method>
- *   body: {"type":"client-request","rpcId":"<uuid>","method":"<method>","payload":{...}}
- * 请求经 host 的 loopback 信任围栏放行 (Host 为 127.0.0.1/localhost 且不带 Origin 头)。
+ * RPC 传输按 dsh 版本自适应 ([RpcStyle] 探测):
+ *  - LEGACY (dsh ≤ 0.1.1):  POST /api/<namespace>.<method>, 扁平 payload
+ *  - REMOTE (dsh ≥ 0.1.2-alpha): 端点改为 /api/<namespace>/<method>, payload 改为
+ *    {"args": ...} 包装 (typert @Remote 体系, 参数名随方法不同: request / _request / 直接字段);
+ *    返回结构不变 (workspace/create -> {workspace, created} 等), 调用方解析逻辑通用。
+ * 请求经 host 的 loopback 信任围栏放行 (Host 为 127.0.0.1/localhost 且不带 Origin 头),
+ * 新版 dsh 还需浏览器认证 cookie (见 DshWebAuth)。
  *
  * 流程 (每次加载 WebUI 前调用一次, 幂等):
  *  1. workspace.create {path}            -> 注册项目工作空间 (已存在则幂等返回, created=false)
  *  2. 若刚创建 -> 完成 (新工作空间 createdAt 最新, 自动成为"最近")
  *  3. 若已存在但当前不是"最近工作空间" -> session.create {workspaceId}
  *     (新会话 updatedAt 最新, 使其所在工作空间成为"最近"), 页面加载后就会落在项目上
+ *
+ * 注: REMOTE 版移除了 workspace.list, "最近工作空间"判定改用 session.list
+ * (会话项带 cwd = 工作空间路径 + updatedAt), 见 [computeRecentWorkspace]。
  */
 object DshWorkspaceApi {
 
     private val LOG = Logger.getInstance(DshWorkspaceApi::class.java)
+
+    /**
+     * RPC 传输风格:
+     *  - LEGACY: dsh ≤ 0.1.1 (点号端点 + 扁平 payload)
+     *  - REMOTE: dsh ≥ 0.1.2-alpha (斜杠端点 + args 包装, typert @Remote 体系; workspace.list 已移除)
+     */
+    enum class RpcStyle { LEGACY, REMOTE }
+
+    /** REMOTE 风格下 payload 进 args 的包装方式 */
+    private enum class ArgsKind { REQUEST, EMPTY, DIRECT }
+
+    /** 点号方法名 -> (斜杠端点, args 包装方式); 未列出的方法按原样透传 */
+    private val REMOTE_ENDPOINTS: Map<String, Pair<String, ArgsKind>> = mapOf(
+        "workspace.create" to ("workspace/create" to ArgsKind.REQUEST),
+        "session.create" to ("session/create" to ArgsKind.REQUEST),
+        "workspace.archiveSession" to ("workspace/archiveSession" to ArgsKind.REQUEST),
+        "session.page" to ("session/page" to ArgsKind.REQUEST),
+        "session.list" to ("session/list" to ArgsKind.EMPTY),
+        "settings.update" to ("settings/update" to ArgsKind.DIRECT),
+    )
+
+    /** 探测到的 RPC 风格 (按端口缓存; dsh 重启不换端口, 风格不变; 停止 dsh 时由 DshServer 清空) */
+    private val styleCache = java.util.concurrent.ConcurrentHashMap<Int, RpcStyle>()
+
+    /** 当前端口的 RPC 风格 (未探测过返回 null) */
+    fun rpcStyle(port: Int): RpcStyle? = styleCache[port]
+
+    /** dsh 停止时清空探测缓存 (下次启动重新探测) */
+    fun invalidateStyle(port: Int) {
+        styleCache.remove(port)
+    }
 
     private class RpcResult(val ok: Boolean, val value: JsonObject?)
 
@@ -52,8 +90,12 @@ object DshWorkspaceApi {
     fun ensureProjectWorkspace(port: Int, projectDshPath: String?, timeoutMs: Long = 8000): WorkspaceSyncResult? {
         if (projectDshPath.isNullOrBlank()) return null
         val deadline = System.currentTimeMillis() + timeoutMs
-        val create = rpcWithin(port, "workspace.create", "{\"path\":${jsonString(projectDshPath)}}", deadline)
-            ?: return null
+        val create = rpcWithin(
+            port,
+            "workspace.create",
+            JsonObject().apply { addProperty("path", projectDshPath) },
+            deadline,
+        ) ?: return null
         if (!create.ok) {
             LOG.warn("workspace.create failed: ${create.value}")
             return null
@@ -69,13 +111,18 @@ object DshWorkspaceApi {
         var sessionItems: JsonArray? = null
         if (!created) {
             // 工作空间已存在: 只有当它当前不是"最近工作空间"时才新建会话提升其新鲜度
-            val recent = computeRecentWorkspace(port, deadline)
+            val recent = computeRecentWorkspace(port, workspaceId, projectDshPath, deadline)
             if (recent == null) {
                 return WorkspaceSyncResult(workspaceId, sessionIds, bumped)
             }
             sessionItems = recent.second
-            if (recent.first != workspaceId) {
-                val bump = rpcWithin(port, "session.create", "{\"workspaceId\":${jsonString(workspaceId)}}", deadline)
+            if (!recent.first) {
+                val bump = rpcWithin(
+                    port,
+                    "session.create",
+                    JsonObject().apply { addProperty("workspaceId", workspaceId) },
+                    deadline,
+                )
                 if (bump?.ok == true) {
                     bumped = true
                     // 新会话立即可归档: 归档不影响"最近"计算 (session.list 含已归档会话),
@@ -111,7 +158,12 @@ object DshWorkspaceApi {
 
     private fun archiveSession(port: Int, sessionId: String, deadline: Long) {
         if (System.currentTimeMillis() >= deadline) return
-        val r = rpcWithin(port, "workspace.archiveSession", "{\"sessionId\":${jsonString(sessionId)}}", deadline)
+        val r = rpcWithin(
+            port,
+            "workspace.archiveSession",
+            JsonObject().apply { addProperty("sessionId", sessionId) },
+            deadline,
+        )
         if (r?.ok != true) LOG.warn("workspace.archiveSession failed: ${r?.value}")
     }
 
@@ -130,7 +182,10 @@ object DshWorkspaceApi {
      */
     fun syncLocalePreference(port: Int, localeId: String, timeoutMs: Long = 4000): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
-        val payload = "{\"ns\":${jsonString("locale")},\"patch\":{\"preference\":${jsonString(localeId)}}}"
+        val payload = JsonObject().apply {
+            addProperty("ns", "locale")
+            add("patch", JsonObject().apply { addProperty("preference", localeId) })
+        }
         val r = rpcWithin(port, "settings.update", payload, deadline) ?: return false
         if (!r.ok) {
             LOG.warn("settings.update (locale) failed: ${r.value}")
@@ -140,63 +195,114 @@ object DshWorkspaceApi {
     }
 
     /**
-     * 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者。
+     * 判断项目工作空间当前是否为"最近工作空间" (false = 需要 bump 提升新鲜度)。
      * 同时带回 session.list 的会话列表, 供空白会话清理复用 (省一次 RPC)。
+     * 返回 null 表示判定失败 (API 不可用), 调用方按现状继续。
+     *
+     * 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者。
+     *  - LEGACY: 遍历 workspace.list (含 createdAt 兜底)
+     *  - REMOTE: workspace.list 已移除, 改用 session.list 的 cwd (=工作空间路径) + updatedAt;
+     *    项目工作空间无会话时视为"不是最近" (需要 bump —— 与旧版"无会话用 createdAt"
+     *    相比略有偏差: 项目会多 bump 一次, 无副作用, 且只在其他空间有更近会话时发生)
      */
-    private fun computeRecentWorkspace(port: Int, deadline: Long): Pair<String?, JsonArray?> {
-        val ws = rpcWithin(port, "workspace.list", "{}", deadline) ?: return null to null
-        val s = rpcWithin(port, "session.list", "{}", deadline) ?: return null to null
-        val wsItems = ws.value?.getAsJsonArray("items") ?: return null to null
-        val sessionItems = s.value?.getAsJsonArray("items") ?: return null to null
-
-        val updatedAt = HashMap<String, Long>()
-        for (el in sessionItems) {
-            val o = el.asJsonObject
-            val id = o.get("sessionId")?.asString ?: continue
-            val ts = o.get("updatedAt")?.asLong ?: continue
-            updatedAt[id] = ts
-        }
-
-        var selected: String? = null
-        var selectedTime = Long.MIN_VALUE
-        for (el in wsItems) {
-            val o = el.asJsonObject
-            val id = o.get("workspaceId")?.asString ?: continue
-            var latest = Long.MIN_VALUE
-            o.getAsJsonArray("sessionIds").forEach { sid ->
-                updatedAt[sid.asString]?.let { if (it > latest) latest = it }
-            }
-            if (latest == Long.MIN_VALUE) {
-                latest = try {
-                    Instant.parse(o.get("createdAt").asString).toEpochMilli()
-                } catch (_: Throwable) {
-                    Long.MIN_VALUE
+    private fun computeRecentWorkspace(
+        port: Int,
+        workspaceId: String,
+        projectDshPath: String,
+        deadline: Long,
+    ): Pair<Boolean, JsonArray?>? {
+        return when (resolveStyle(port, deadline)) {
+            RpcStyle.REMOTE -> {
+                val s = rpcWithin(port, "session.list", JsonObject(), deadline) ?: return null
+                val sessionItems = s.value?.getAsJsonArray("items") ?: return null
+                // cwd 为 Windows 反斜杠形态, projectDshPath 可能为正斜杠: 比较前统一斜杠
+                val projectCwd = projectDshPath.replace('\\', '/')
+                var projectLatest = Long.MIN_VALUE
+                var globalLatest = Long.MIN_VALUE
+                for (el in sessionItems) {
+                    val o = el.asJsonObject
+                    val ts = o.get("updatedAt")?.asLong ?: continue
+                    if (ts > globalLatest) globalLatest = ts
+                    if (o.get("cwd")?.asString?.replace('\\', '/') == projectCwd && ts > projectLatest) {
+                        projectLatest = ts
+                    }
                 }
+                // 无任何会话时 (globalLatest=MIN) 视为"项目即最近", 不 bump
+                (projectLatest >= globalLatest) to sessionItems
             }
-            if (selected == null || latest > selectedTime) {
-                selected = id
-                selectedTime = latest
+            RpcStyle.LEGACY -> {
+                val ws = rpcWithin(port, "workspace.list", JsonObject(), deadline) ?: return null
+                val s = rpcWithin(port, "session.list", JsonObject(), deadline) ?: return null
+                val wsItems = ws.value?.getAsJsonArray("items") ?: return null
+                val sessionItems = s.value?.getAsJsonArray("items") ?: return null
+
+                val updatedAt = HashMap<String, Long>()
+                for (el in sessionItems) {
+                    val o = el.asJsonObject
+                    val id = o.get("sessionId")?.asString ?: continue
+                    val ts = o.get("updatedAt")?.asLong ?: continue
+                    updatedAt[id] = ts
+                }
+
+                var selected: String? = null
+                var selectedTime = Long.MIN_VALUE
+                for (el in wsItems) {
+                    val o = el.asJsonObject
+                    val id = o.get("workspaceId")?.asString ?: continue
+                    var latest = Long.MIN_VALUE
+                    o.getAsJsonArray("sessionIds").forEach { sid ->
+                        updatedAt[sid.asString]?.let { if (it > latest) latest = it }
+                    }
+                    if (latest == Long.MIN_VALUE) {
+                        latest = try {
+                            Instant.parse(o.get("createdAt").asString).toEpochMilli()
+                        } catch (_: Throwable) {
+                            Long.MIN_VALUE
+                        }
+                    }
+                    if (selected == null || latest > selectedTime) {
+                        selected = id
+                        selectedTime = latest
+                    }
+                }
+                (selected == workspaceId) to sessionItems
+            }
+            null -> {
+                LOG.warn("cannot resolve dsh rpc style for $port; skip recency check")
+                null
             }
         }
-        return selected to sessionItems
+    }
+
+    /**
+     * 供文件同步等外部模块调用的通用 RPC: 返回 result.value (业务失败返回 null)。
+     * 入参为对象化 payload (方法名点号即可, 传输层按当前风格自动适配)。
+     */
+    fun callJson(port: Int, method: String, payload: JsonObject, timeoutMs: Long = 4000): JsonObject? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val r = rpcWithin(port, method, payload, deadline) ?: return null
+        return if (r.ok) r.value else null
     }
 
     /** 在截止时间前调用一次 dsh /api RPC; 传输层失败返回 null, 业务失败返回 ok=false 的结果 */
-    private fun rpcWithin(port: Int, method: String, payload: String, deadline: Long): RpcResult? {
+    private fun rpcWithin(port: Int, method: String, payload: JsonObject, deadline: Long): RpcResult? {
         if (System.currentTimeMillis() >= deadline) return null
-        val body = buildString {
-            append("{\"type\":\"client-request\",\"rpcId\":")
-            append(jsonString(UUID.randomUUID().toString()))
-            append(",\"method\":")
-            append(jsonString(method))
-            append(",\"payload\":")
-            append(payload)
-            append("}")
+        val style = resolveStyle(port, deadline) ?: return null
+        // REMOTE 风格: 端点斜杠化 + payload 转 args 包装 (body 里的 method 必须与端点一致)
+        val (endpoint, wirePayload) = if (style == RpcStyle.REMOTE) {
+            remoteTransform(method, payload)
+        } else {
+            method to payload
         }
-        val text = post(port, method, body) ?: return null
+        // 信封 body 用对象构造, 避免手拼 JSON 出错
+        val body = JsonObject().apply {
+            addProperty("type", "client-request")
+            addProperty("rpcId", UUID.randomUUID().toString())
+            addProperty("method", endpoint)
+            add("payload", wirePayload)
+        }.toString()
+        val text = post(port, endpoint, body) ?: return null
         return try {
-            // 静态 parseString (Gson 2.8.6+ 提供, 2022.3 起的 IDE 均满足);
-            // 实例构造器 JsonParser() / parse(String) 已废弃, 不再使用
             val root = JsonParser.parseString(text).asJsonObject
             val result = root.getAsJsonObject("result")
             if (result.get("ok").asBoolean) {
@@ -210,9 +316,101 @@ object DshWorkspaceApi {
         }
     }
 
+    /**
+     * 探测并缓存端口的 RPC 风格。
+     * 探测请求: 新版格式 session/list -> 2xx 即 REMOTE; 404 再试旧版格式 session.list -> LEGACY。
+     * 认证/传输未就绪时返回 null (调用方重试时再探)。
+     */
+    private fun resolveStyle(port: Int, deadline: Long): RpcStyle? {
+        styleCache[port]?.let { return it }
+        if (System.currentTimeMillis() >= deadline) return null
+        val cookie = DshWebAuth.cookieHeader(port)
+            ?: (if (DshWebAuth.awaitToken(2000)) DshWebAuth.cookieHeader(port) else null)
+        // 对象构造探测报文 (固定结构)
+        val remoteBody = JsonObject().apply {
+            addProperty("type", "client-request")
+            addProperty("rpcId", "style-probe")
+            addProperty("method", "session/list")
+            add("payload", JsonObject().apply {
+                add("args", JsonObject().apply { add("_request", JsonObject()) })
+            })
+        }.toString()
+        val remoteRes = postOnce(port, "session/list", remoteBody, cookie)
+        val rpcStyle = when {
+            remoteRes == null -> null // 传输失败 (dsh 未就绪/无认证): 下次再探
+            remoteRes.status in 200..299 -> RpcStyle.REMOTE
+            remoteRes.status != 404 -> null // 401 等: 认证未就绪, 下次再探
+            else -> {
+                // 新版端点 404: 试旧版
+                val legacyBody = JsonObject().apply {
+                    addProperty("type", "client-request")
+                    addProperty("rpcId", "style-probe")
+                    addProperty("method", "session.list")
+                    add("payload", JsonObject())
+                }.toString()
+                val legacyRes = postOnce(port, "session.list", legacyBody, cookie)
+                if (legacyRes != null && legacyRes.status in 200..299) RpcStyle.LEGACY else null
+            }
+        }
+        if (rpcStyle != null) {
+            styleCache[port] = rpcStyle
+            LOG.info("dsh rpc style on $port: $rpcStyle")
+        }
+        return rpcStyle
+    }
+
+    /**
+     * REMOTE 风格下: 点号方法名 -> 斜杠端点, 扁平 payload -> args 包装; 未知方法原样透传。
+     * 全程对象构造 (wirePayload 为可嵌入信封的 JsonObject)。
+     */
+    private fun remoteTransform(method: String, payload: JsonObject): Pair<String, JsonObject> {
+        val remote = REMOTE_ENDPOINTS[method] ?: return method to payload
+        val inner = when (remote.second) {
+            ArgsKind.REQUEST -> JsonObject().apply { add("request", payload) }
+            ArgsKind.EMPTY -> JsonObject().apply { add("_request", JsonObject()) } // 无参方法 (如 session.list)
+            ArgsKind.DIRECT -> payload // 参数直接是 args 内容 (如 settings.update 的 ns/patch)
+        }
+        val wire = JsonObject().apply { add("args", inner) }
+        return remote.first to wire
+    }
+
+    /**
+     * 调用一次 dsh /api RPC (带浏览器认证 cookie)。
+     * 新版 dsh (0.1.2+) 的 /api 需要认证 cookie: 请求前先等启动令牌 (通常几百毫秒内
+     * 随 dsh 输出到达) 并换取 cookie; 旧版 dsh (无认证) 换取失败则按原样请求。
+     * HTTP 401 (认证失效, 如 dsh 重启换了签名密钥) 时作废缓存、重换一次再试。
+     */
     private fun post(port: Int, method: String, body: String): String? {
+        var cookie = DshWebAuth.cookieHeader(port)
+        if (cookie == null && DshWebAuth.awaitToken(2000)) {
+            cookie = DshWebAuth.cookieHeader(port)
+        }
+        var result = postOnce(port, method, body, cookie)
+        if (result != null && result.status == 401) {
+            DshWebAuth.onUnauthorized(port)
+            val fresh = DshWebAuth.cookieHeader(port)
+            if (fresh != null) {
+                LOG.warn("dsh api $method -> HTTP 401, re-authenticated and retrying")
+                result = postOnce(port, method, body, fresh)
+            }
+        }
+        if (result == null || result.status !in 200..299) {
+            LOG.warn("dsh api $method -> HTTP ${result?.status ?: "transport error"}")
+            // 端点 404: 端口上的 dsh 可能换了版本 (探测缓存失效), 下次调用重新探测
+            if (result?.status == 404) {
+                styleCache.remove(port)
+            }
+            return null
+        }
+        return result.text
+    }
+
+    private class PostResult(val status: Int, val text: String?)
+
+    /** 单次 HTTP POST; 传输失败返回 null, 成功/已知状态码返回 (status, body) */
+    private fun postOnce(port: Int, method: String, body: String, cookie: String?): PostResult? {
         var conn: HttpURLConnection? = null
-        try {
+        return try {
             // URL(String) 构造器已废弃 (Java 20+), 改用 URI.toURL()
             val url = java.net.URI("http://127.0.0.1:$port/api/$method").toURL()
             conn = url.openConnection() as HttpURLConnection
@@ -221,38 +419,32 @@ object DshWorkspaceApi {
             conn.readTimeout = 4000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json")
+            cookie?.let { conn.setRequestProperty("Cookie", it) }
             conn.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
             val code = conn.responseCode
-            if (code !in 200..299) {
-                LOG.warn("dsh api $method -> HTTP $code")
-                return null
+            val text = try {
+                conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            } catch (_: Throwable) {
+                null
             }
-            return conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            // 诊断: 非 2xx 时打印状态 + 请求体 + 响应体 (便于定位 HTTP 层失败原因)
+            if (code !in 200..299) {
+                val resp = text ?: try {
+                    conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
+                } catch (_: Throwable) {
+                    null
+                }
+                LOG.warn("dsh api $method -> HTTP $code, body=${body.take(240)}, resp=${resp?.take(160)}")
+            }
+            PostResult(code, text)
         } catch (t: Throwable) {
             LOG.warn("dsh api $method failed", t)
-            return null
+            null
         } finally {
             try {
                 conn?.disconnect()
             } catch (_: Throwable) {
             }
         }
-    }
-
-    /** JSON 字符串字面量转义 */
-    private fun jsonString(value: String): String {
-        val sb = StringBuilder("\"")
-        for (ch in value) {
-            when (ch) {
-                '\\' -> sb.append("\\\\")
-                '"' -> sb.append("\\\"")
-                '\n' -> sb.append("\\n")
-                '\r' -> sb.append("\\r")
-                '\t' -> sb.append("\\t")
-                else -> if (ch.code < 0x20) sb.append("\\u%04x".format(ch.code)) else sb.append(ch)
-            }
-        }
-        sb.append("\"")
-        return sb.toString()
     }
 }

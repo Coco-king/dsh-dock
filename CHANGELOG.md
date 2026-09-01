@@ -9,6 +9,7 @@
 - **变更（Changed）**：启动 dsh 固定附加 `--no-open`（不再探测版本），启动更快（需 dsh 0.1.0-rc.8+）
 - **变更（Changed）**：「刷新」立即重载页面，工作空间同步转后台，不再卡顿数秒
 - **修复（Fixed）**：修复上次退出未关闭 Dsh Dock 窗口时，下次启动窗口一直空白的问题
+- **修复（Fixed）**：兼容新版 dsh（0.1.2-alpha 起）的 WebUI 安全认证与重构后的 API/事件机制——插件自动识别并携带启动令牌，工作空间同步、界面语言跟随适配新版接口并自动兼容旧版 dsh；dsh 编辑文件后自动刷新编辑器在旧版事件流不可用时自动切换为新版轮询方式（此前升级 dsh 后这些功能失效、页面停在认证页）
 
 ### English
 
@@ -17,6 +18,7 @@
 - **Changed**: `--no-open` is now always appended when starting dsh (no version probing), making startup faster (requires dsh 0.1.0-rc.8+)
 - **Changed**: Refresh now reloads the page immediately with the workspace sync moved to the background
 - **Fixed**: Fixed the Dsh Dock window staying empty after an IDE restart when it was left open at the previous shutdown
+- **Fixed**: Compatibility with the new dsh web (0.1.2-alpha onward) WebUI security authentication and its reworked API/event mechanism — the plugin now detects and carries the launch token automatically, adapts workspace sync and UI-language following to the new interface while staying compatible with older dsh versions, and switches auto-refresh of editors after dsh edits to a new polling mode when the legacy event stream is unavailable (after upgrading dsh these features were broken and the page stopped at the authentication page)
 
 ## [1.0.3] - 2026-08-27
 
