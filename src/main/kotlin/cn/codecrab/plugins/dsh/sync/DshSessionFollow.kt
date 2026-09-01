@@ -26,15 +26,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  - 开场 snapshot 只向调用方报告基线 cursor (event==null), 不处理历史 records (防回放);
  *  - 之后每条 `event` 按 (sessionId, seq, event) 回调, seq 过滤与 VFS 刷新由调用方负责;
  *  - 校准线程每 30s 用 session.list 对齐会话集合: 新会话开流, 消失的会话发 cancel;
- *  - 断线自动退避重连 (每次重连都是新快照, 不丢新事件; 重连窗口的旧段由调用方轮询兜底)。
+ *  - 断线自动退避重连 (每次重连都是新快照, 场景内事件 gap-free)。
  *
  * 线程模型: 两个 daemon 线程 —— 读帧循环 (阻塞收帧 + 退避重连) 与 30s 校准线程;
  * 回调在对应线程执行, 解析与入队须轻量 (VFS 刷新由调用方保证线程安全)。
  */
 class DshSessionFollow(
     private val port: Int,
-    /** 事件回调: event == null 表示开场快照, seq 为基线游标; 否则为一条会话事件 */
-    private val onSessionEvent: (sessionId: String, seq: Long, event: JsonObject?) -> Unit,
+    /** 事件回调: event == null 表示开场快照 (仅建立基线); 否则为一条会话事件 */
+    private val onSessionEvent: (sessionId: String, event: JsonObject?) -> Unit,
 ) {
 
     private val LOG = Logger.getInstance(DshSessionFollow::class.java)
@@ -51,18 +51,6 @@ class DshSessionFollow(
 
     @Volatile
     private var ws: WebSocket? = null
-
-    /** 是否成功建立过连接 (收到过快照) */
-    @Volatile
-    private var alive = false
-
-    /** 连续重连失败次数 (供调用方决定轮询兜底) */
-    @Volatile
-    var consecutiveFailures: Int = 0
-        private set
-
-    val isAlive: Boolean
-        get() = alive
 
     private var thread: Thread? = null
     private var calibrateThread: Thread? = null
@@ -100,7 +88,6 @@ class DshSessionFollow(
             val latch = CountDownLatch(1)
             val w = connect(latch)
             if (w == null) {
-                consecutiveFailures++
                 if (!sleepFor(backoffMs)) return
                 backoffMs = minOf(backoffMs * 2, 30_000L)
                 continue
@@ -120,9 +107,7 @@ class DshSessionFollow(
                 return
             }
             if (!running.get()) return
-            alive = false
             synchronized(this) { streams.clear() }
-            consecutiveFailures++
             if (!sleepFor(backoffMs)) return
             backoffMs = minOf(backoffMs * 2, 30_000L)
         }
@@ -186,34 +171,25 @@ class DshSessionFollow(
                 }
                 "error" -> {
                     LOG.warn("dsh follow stream $streamId ended: ${frame.get("error")}")
-                    synchronized(this) {
-                        streams.remove(streamId)
-                        alive = streams.isNotEmpty()
-                    }
+                    synchronized(this) { streams.remove(streamId) }
                 }
-                "end" -> synchronized(this) {
-                    streams.remove(streamId)
-                    alive = streams.isNotEmpty()
-                }
+                "end" -> synchronized(this) { streams.remove(streamId) }
             }
         } catch (t: Throwable) {
             LOG.warn("dsh follow frame parse failed", t)
         }
     }
 
-    /** 一个 item 值: snapshot (开场, 报基线) 或 event 条目 */
+    /** 一个 item 值: snapshot (开场基线) 或 event 条目 */
     private fun onItem(sessionId: String, value: JsonObject) {
         when (value.get("type")?.asString) {
             "snapshot" -> {
-                // 只报告基线游标 (event==null), 忽略历史 records 防回放
-                value.get("cursor")?.asLong?.let { onSessionEvent(sessionId, it, null) }
-                alive = true
-                consecutiveFailures = 0
+                // 开场快照 (event==null): 调用方仅记录基线, 不做处理 (避免场景内历史回放)
+                onSessionEvent(sessionId, null)
             }
             "event" -> {
                 val event = value.get("event")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
-                val seq = event.get("seq")?.asLong ?: return
-                onSessionEvent(sessionId, seq, event)
+                onSessionEvent(sessionId, event)
             }
         }
     }

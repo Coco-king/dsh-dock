@@ -48,9 +48,6 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     /** dsh WebUI 语言: "" = 跟随浏览器/IDE; "zh-CN" = 中文; "en" = English */
     var forceLocale: String = ""
 
-    /** 文件同步轮询游标 (会话 seq): sessionId -> 已消费到的 asOfSeq。
-     * 跨 IDE/dsh 重启保留 —— 新启动的轮询只同步 seq 前进的新事件, 不回放历史 (避免启动时刷屏) */
-    var syncCursors: MutableMap<String, String> = HashMap()
 
     /** 指定启动方式对应的端口 */
     fun portFor(mode: String): Int = if (mode == MODE_WSL) wslPort else windowsPort
@@ -77,7 +74,6 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
         syncEditedFiles = state.syncEditedFiles
         themeFollowIde = state.themeFollowIde
         forceLocale = state.forceLocale
-        syncCursors = HashMap(state.syncCursors)
     }
 
     companion object {
