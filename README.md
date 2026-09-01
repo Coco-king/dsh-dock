@@ -7,45 +7,53 @@ no terminal or separate browser needed.
 
 **English**
 
+**Version support**: dsh **0.1.0-rc.8 or later** (the latest **0.1.2-alpha** is fully supported)
+
 1. **One-click start of dsh**: Click the whale icon in the right tool window bar to open the Dsh Dock
    tool window and start the DeepSeek Harness assistant (`dsh web`) with one click; the WebUI is shown
    directly in the built-in browser panel of the tool window, so you can chat with DeepSeek models
    without leaving the IDE
 2. **Two launch modes (optional)**: Start in **WSL** or **directly in Windows**, with separately
    configurable ports and extra arguments for each mode
-3. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
+3. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
+   it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes;
+   note the latest dsh (0.1.2-alpha+) requires a launch-token authentication, so an externally
+   started instance cannot be auto-authenticated (the page shows the auth prompt) — start dsh
+   from the plugin instead
+4. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
    with multiple open windows it follows the **active window**, so other windows never hijack the project space
-4. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
-   it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes
 5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
    reference with one click, so the assistant can read the file when needed
-6. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
-   software intercepts it, please allow it
-7. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2022.3 and later
-8. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
-9. **Auto-refresh after dsh edits**: Listens to dsh's session event stream; when a file-writing
+6. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
    tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
    editors update to the new content immediately — no more stale code or reopening files
+7. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
+   software intercepts it, please allow it
+8. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2022.3 and later
+9. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
 
 DeepSeek Harness（dsh）JetBrains IDE 插件（IntelliJ IDEA / PyCharm / WebStorm 等）：一键启动 `dsh web` AI 助手，在 IDE 内置浏览器中直接与
 DeepSeek 模型对话，无需终端、无需另开浏览器。
 
+**版本支持**：dsh **0.1.0-rc.8 及以上**（对最新 **0.1.2-alpha** 完整支持）
+
 1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
    WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
 2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
    两种方式的端口与附加参数可分别配置
-3. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
+3. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
+   直接在内置浏览器中打开 WebUI，不会重复启动进程；注意新版 dsh（0.1.2-alpha 起）需要
+   启动令牌认证，外部启动的实例无法自动认证（页面会停在认证提示页），请改用插件启动
+4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
    其他窗口不会抢占项目空间
-4. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
-   直接在内置浏览器中打开 WebUI，不会重复启动进程
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
-6. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-7. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2022.3 及之后版本
-8. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
-9. **dsh 编辑后自动刷新**：监听 dsh 会话事件流，文件写入工具（Edit / write 等）成功执行后
+6. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
+7. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+8. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2022.3 及之后版本
+9. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址
@@ -54,6 +62,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ## 功能
 
+- **支持最新版 dsh（0.1.2-alpha）**：完整兼容 dsh 最新版的安全认证、重构后的接口与实时文件同步通道，
+  开箱即用；旧版 dsh（0.1.0-rc.8 及以上）同样兼容
 - **右侧工具栏鲸鱼图标**：安装后在右侧工具栏出现黑色的 dsh 鲸鱼图标，点击即可打开 Dsh Dock 工具窗口
 - **双启动方式（设置可选）**：
   - **WSL 中启动**：通过 `wsl.exe` 在 WSL 里运行 dsh（参考 `ldsh.cmd` 的启动思路），
@@ -64,7 +74,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   - 两种启动方式的**端口与附加参数分别配置**（互不影响），切换启动方式无需改回设置
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
 - **已启动自动识别**：如果对应端口已被监听（比如你自己已经启动了 dsh），插件会**跳过启动步骤**，
-  直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停
+  直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停。
+  注意：新版 dsh（0.1.2-alpha 起）带启动令牌认证，外部启动的实例插件拿不到令牌，页面会停在
+  认证提示页（日志有说明）——请通过插件启动 dsh，或手动打开 dsh web 打印的带 token 地址
 - **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台预热 dsh 与内嵌浏览器页面，
   首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止
 - **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
@@ -127,7 +139,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ```bash
 ./gradlew buildPlugin
-# 产物: build/distributions/dsh-idea-plugin-1.0.1.zip
+# 产物: build/distributions/dsh-idea-plugin-1.1.0.zip
 # 通过 IDEA: Settings -> Plugins -> Install Plugin from Disk... 安装
 ```
 
@@ -144,7 +156,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 | Windows 附加参数 | Windows 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 | 自动启动 | 启动时机：IDEA 启动时（默认，含内嵌浏览器预热）/ 打开工具窗口时 / 手动启动 | IDEA 启动时 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
-| 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（监听 dsh 事件流，工具成功执行后触发） | 开启 |
+| 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（实时监听 dsh 会话事件，写入成功即刷新） | 开启 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
 | WebUI 语言 | 单选：跟随 IDE 语言 / 简体中文 / English（跟随模式下按 IDE 界面语言自动同步 dsh 语言偏好，如英文 IDE → 英文 WebUI） | 跟随 |
 
@@ -162,12 +174,12 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **Windows 模式**：生成 `dsh-run-win-*.cmd`（`cd /d` 项目目录 + `dsh web --port <port>`），
   通过隐藏的 PowerShell 执行（若安全软件拦截 PowerShell 请放行，否则启动可能失败）
 - dsh 进程的标准输出/错误输出被捕获到工具窗口的日志面板
-- 轮询 `127.0.0.1:<port>` 端口，就绪后由内嵌 JCEF 浏览器加载 WebUI
+- 探测 `127.0.0.1:<port>` 端口就绪后，由内嵌 JCEF 浏览器加载 WebUI（新版 dsh 自动完成安全认证）
 - **工作空间跟随项目**：dsh 的"工作空间"是持久化注册表（存于 `~/.dsh/storages`，跨进程重启保留），
   WebUI 启动时自动选中**最近活跃的工作空间**（按会话时间排序），与 dsh 进程的启动目录无关。
-  因此插件在每次加载 WebUI 前，通过 dsh 自带的 `/api` RPC 通道（`POST /api/workspace.create` 等，
-  与 dsh 客户端同一协议、经 loopback 信任围栏放行）把当前项目注册为工作空间，并在它不是"最近"时
-  新建一个会话提升其新鲜度——这样页面初始选中就会落在当前项目上，而不是上次用过的项目。
+  因此插件在每次加载 WebUI 前，通过 dsh 的 `/api` 通道把当前项目注册为工作空间
+  （自动适配新旧版 dsh 接口差异，新版含浏览器安全认证），并在它不是"最近"时新建一个会话提升其
+  新鲜度——这样页面初始选中就会落在当前项目上，而不是上次用过的项目。
   **多窗口隔离**：多个窗口共用同一个 dsh 实例（同一进程的多个项目窗口、或复用同一端口的多个
   IDE 实例），为避免互相把工作空间抢成别的项目，插件只在**当前活动窗口**同步工作空间：
   后台窗口不刷新页面、不抢占「项目空间」；窗口重新获得焦点时若工作空间已是自己的项目则保持
@@ -182,16 +194,16 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **防止 dsh 打开系统浏览器**：dsh 自 v0.1.0-rc.8 起 `dsh web` 默认会用系统浏览器打开 UI，
   与插件内嵌浏览器冲突。插件为 `dsh web` 自动附加 `--no-open`（`web --port <port> --no-open`），
   需 dsh 0.1.0-rc.8 及以上版本（更早版本不支持该参数）
-- **右键发送引用**：`@路径` 引用由注入脚本写入 WebUI 输入框——dsh 输入框是 React 受控
-  组件，直接改 `value` 会被覆盖，因此用原生 `value` setter + 派发 `input` 事件更新草稿；
-  页面未就绪时引用先暂存，主框架 `onLoadEnd` 后自动补发
+- **右键发送引用**：`@路径` 引用由注入脚本写入 WebUI 输入框——新版 dsh（0.1.2+）的输入框是
+  Lexical 受控编辑器，脚本聚焦后触发 `insertText` 使其接受草稿；旧版 React 受控文本框用原生
+  value setter + `input` 事件。页面未就绪时引用先暂存，主框架 `onLoadEnd` 后自动补发
 - **dsh 编辑后自动刷新**：WSL 模式（或其他外部进程）写文件时，Windows 侧的文件变更通知
-  （IDEA 原生文件监听依赖它）经常不触发，导致 IDEA 一直显示旧代码。插件监听 dsh 会话
-  事件流 `GET /api/events.mux`（新版 dsh 为 WebSocket、旧版为 SSE，自动降级）：在
-  `tool/call` 事件中登记文件写入类工具（str_replace_editor / edit / write 等）的调用与
-  文件路径，`tool/result` 事件确认工具**成功**（非错误）后把路径换算回 Windows 侧
-  （`/mnt/c/...` -> `C:/...`），定向刷新该文件的 VFS 并重载编辑器中无未保存修改的文档；
-  失败的工具调用不刷新；事件流不可用（旧版 dsh）时只记一行日志，不影响 WebUI 正常使用
+  （IDEA 原生文件监听依赖它）经常不触发，导致 IDEA 一直显示旧代码。插件订阅 dsh 会话事件：
+  新版 dsh（0.1.2+）走 **session/follow 实时监听通道**（remote.mux WebSocket 长连接，事件级即时推送），
+  旧版（0.1.0-rc.8+）用 events.mux 事件流。在 `tool/call` 事件中登记文件写入类工具
+  （str_replace_editor / edit / write 等）的调用与文件路径，`tool/result` 事件确认工具**成功**
+  （非错误）后把路径换算回 Windows 侧（`/mnt/c/...` -> `C:/...`），定向刷新该文件的 VFS 并
+  重载编辑器中无未保存修改的文档；失败的工具调用不刷新，同一文件短期内的多次写入合并为一次刷新
 - **只停自己启动的 dsh**：WSL 模式启动时把 dsh 的真实 PID 写入标识文件（`dsh-owner-*.pid`），
   停止/退出清理时 `kill` 该 PID；Windows 模式 `taskkill` 本插件持有的进程树。
   **外部启动的同端口 dsh（如手动 `ldsh.cmd`）绝不会被误杀**
@@ -201,6 +213,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ## 常见问题
 
+- **页面停在认证提示页（dsh 0.1.2-alpha 起）**：新版 dsh 的 WebUI 需要**启动令牌**完成浏览器认证。
+  由插件启动的 dsh 会自动完成认证；若 dsh 是外部启动的（插件无法获得其令牌），请**通过插件启动/重启
+  dsh**，或手动打开 dsh web 启动时打印的带 `?token=` 地址
 - **WebUI 区域显示空白/加载失败**：确认 `Settings -> Tools -> Web Browsers and Preview` 中
   JCEF 已启用（或注册表键 `ide.browser.jcef.enabled` 为 true）；插件内置回退面板可直接用系统浏览器打开，
   且 JCEF 不可用时 WebUI 就绪后会自动改用系统浏览器打开
@@ -219,16 +234,6 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **右键发送后输入框没有出现引用**：确认 JCEF 内嵌浏览器可用（工具窗口中间显示的是 WebUI 页面）；
   若 WebUI 尚未加载完成，引用会等页面就绪后自动补发；仍不行就刷新一次 WebUI 再试
 - **dsh 编辑文件后 IDEA 没有自动更新**：确认 `Settings -> Other Settings -> Dsh Dock` 中
-  「dsh 编辑文件后自动刷新编辑器」已开启，且工具窗口日志出现过「文件同步监听已连接」；
-  若 dsh 版本过旧不支持事件流，插件会静默降级（日志会提示），可手动 `Ctrl+Alt+Y` 同步
+  「dsh 编辑文件后自动刷新编辑器」已开启，且工具窗口日志出现过「已建立实时文件同步监听」；
+  旧版 dsh 走兼容的事件流通道。仍不同步时可手动 `Ctrl+Alt+Y` 同步
   或重新打开文件；另外，文件在 IDEA 里有**未保存修改**时不会被自动覆盖（这是防丢改动的保护）
-
-## 国内镜像加速
-
-项目构建已默认配置国内镜像，避免直连国外仓库慢的问题：
-
-| 下载内容 | 配置位置 | 镜像 |
-| --- | --- | --- |
-| Maven Central / Gradle Plugin Portal 依赖 | `settings.gradle.kts`、`build.gradle.kts` | `https://maven.aliyun.com/repository/{public,central,gradle-plugin}` |
-| Gradle 发行包 (wrapper) | `gradle/wrapper/gradle-wrapper.properties` | `https://mirrors.cloud.tencent.com/gradle/gradle-8.13-bin.zip` |
-| IntelliJ 平台包 (IC-2024.2.5) | 无阿里云镜像 | 直连 `cache-redirector.jetbrains.com`，首次构建约 1GB，属正常 |
