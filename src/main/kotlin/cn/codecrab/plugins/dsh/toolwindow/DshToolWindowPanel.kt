@@ -496,7 +496,7 @@ class DshToolWindowPanel(
     // ---------- 引用注入 (右键菜单发送) ----------
 
     /**
-     * 把 `@路径` 引用送入 WebUI 输入框 (追加到已有草稿后, 自动聚焦)。
+     * 把 `@路径` 引用送入 WebUI 输入框光标处 (路径后自动带一个空格; 无有效光标时追加到末尾, 自动聚焦)。
      * 页面未就绪时先暂存, 待主框架加载完成后自动补发; dsh 未启动则先启动。
      */
     fun injectReference(reference: String) {
@@ -536,13 +536,16 @@ class DshToolWindowPanel(
     }
 
     /**
-     * 注入脚本: 在 WebUI 的输入框上追加引用。
+     * 注入脚本: 把引用插入到 WebUI 输入框的**光标处**, 并在路径后自动带一个空格
+     * (插入点后一位已是空白时不再叠, 避免双空格); 输入框里没有有效光标时回退为末尾追加。
      * 兼容两代 dsh 输入框:
      *  - 新版 (0.1.2+, Lexical contenteditable): 输入组件带 `data-phase`, 是 contenteditable 而非
      *    textarea。受控状态只能通过触发 beforeinput 更新 —— 聚焦后 `document.execCommand('insertText')`
      *    会触发 Lexical 的 beforeinput 处理, 草稿随之更新 (直接改 DOM 文本不会进 Lexical 状态);
-     *  - 旧版 (≤0.1.1, React 受控 textarea): `textarea[data-phase]`, 用原生 value setter + input 事件。
-     * 两种都找不到时自动重试 (最多 20 次 x 250ms)。注意: 每次都追加, 不做去重。
+     *    插入前先检测选区是否仍在输入框内: 在框内保持光标位置原地插入 (不再强制移到末尾)。
+     *  - 旧版 (≤0.1.1, React 受控 textarea): `textarea[data-phase]`, 用原生 value setter + input 事件,
+     *    按 selectionStart/End 在真实光标处拼接插入 (textarea 失焦后光标位置仍保留)。
+     * 两种都找不到时自动重试 (最多 20 次 x 250ms)。注意: 每次都插入, 不做去重。
      */
     private fun buildInjectScript(reference: String): String {
         val refJs = DshWebUiInject.jsString(reference)
@@ -551,29 +554,72 @@ class DshToolWindowPanel(
             |  var REF = $refJs;
             |  var MAX_TRIES = 20;
             |  var tries = 0;
-            |  function appendToTextarea(ta, text) {
+            |  // 旧版 textarea: 在真实光标处拼接插入 (React 受控, 原生 value setter + input 事件)。
+            |  // 文本框失焦后 selectionStart/End 仍保留; 从未聚焦过 (activeElement 不是它) 时回退末尾追加。
+            |  function insertIntoTextarea(ta, text) {
             |    var cur = ta.value || "";
-            |    var sep = cur.length === 0 ? "" : (/\s/.test(cur.charAt(cur.length - 1)) ? "" : " ");
-            |    var next = cur + sep + text;
+            |    var hasCaret = document.activeElement === ta;
+            |    var start = hasCaret ? ta.selectionStart : cur.length;
+            |    var end = hasCaret ? ta.selectionEnd : cur.length;
+            |    var before = cur.slice(0, start);
+            |    var after = cur.slice(end);
+            |    // 光标前一字符非空白 -> 补前置空格, 保证 @引用 独立成词
+            |    var prepend = before.length === 0 ? "" : (/\s/.test(before.charAt(before.length - 1)) ? "" : " ");
+            |    // 路径后自动带一个空格; 插入点后已是空白则不再叠 (避免双空格)
+            |    var trailing = /\s/.test(after.charAt(0)) ? "" : " ";
+            |    var next = before + prepend + text + trailing + after;
+            |    var caret = start + prepend.length + text.length + trailing.length;
             |    var setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set;
             |    setter.call(ta, next);
             |    ta.dispatchEvent(new Event("input", { bubbles: true }));
             |    ta.focus();
-            |    try { ta.setSelectionRange(next.length, next.length); } catch (err) {}
+            |    try { ta.setSelectionRange(caret, caret); } catch (err) {}
             |  }
-            |  function appendToContentEditable(ce, text) {
-            |    ce.focus();
+            |  // 新版 contenteditable (Lexical): 插入到光标处, 无有效光标时末尾追加。
+            |  // 插入前先记录选区是否在输入框内并推导前置/尾部空格, 聚焦后保持选区,
+            |  // execCommand 触发 beforeinput -> Lexical 更新草稿, 光标自动落到插入内容后。
+            |  function insertIntoContentEditable(ce, text) {
+            |    var sel = window.getSelection();
+            |    var hasCaret = !!sel && sel.rangeCount > 0 &&
+            |        ce.contains(sel.anchorNode) && ce.contains(sel.focusNode);
+            |    var prepend = "";
+            |    var trailing = " ";
             |    try {
-            |      var cur = ce.textContent || "";
-            |      var sep = cur.length === 0 ? "" : (/\s/.test(cur.charAt(cur.length - 1)) ? "" : " ");
-            |      var sel = window.getSelection();
-            |      if (sel) { sel.selectAllChildren(ce); sel.collapseToEnd(); }
-            |      // 触发 beforeinput -> Lexical/受控编辑器更新草稿
-            |      var inserted = document.execCommand("insertText", false, sep + text);
-            |      if (inserted) return;
+            |      if (hasCaret) {
+            |        var range = sel.getRangeAt(0);
+            |        var n = range.startContainer;
+            |        // 文本节点上才能精确取到光标前后的字符; 元素节点 (行首/块边界) 视为已有换行分隔
+            |        if (n && n.nodeType === 3) {
+            |          if (range.startOffset > 0 && !/\s/.test(n.data.charAt(range.startOffset - 1))) prepend = " ";
+            |          if (range.startOffset < n.data.length && /\s/.test(n.data.charAt(range.startOffset))) trailing = "";
+            |        }
+            |      } else {
+            |        // 无光标: 末尾追加, 前一个字符非空白则补前置空格
+            |        var lastText = ce.textContent || "";
+            |        if (lastText.length > 0 && !/\s/.test(lastText.charAt(lastText.length - 1))) prepend = " ";
+            |      }
             |    } catch (err) {}
-            |    // 兜底: 直接改文本 + input 事件 (普通 contenteditable 可生效)
-            |    ce.textContent = (ce.textContent || "") + text;
+            |    ce.focus();
+            |    if (hasCaret) {
+            |      // 光标在框内: 保持选区原地插入
+            |      try {
+            |        var inserted = document.execCommand("insertText", false, prepend + text + trailing);
+            |        if (inserted) return;
+            |      } catch (err) {}
+            |    } else {
+            |      // 回退末尾追加: 先把光标定位到末尾 (旧逻辑)
+            |      try {
+            |        var s2 = window.getSelection();
+            |        if (s2) { s2.selectAllChildren(ce); s2.collapseToEnd(); }
+            |        var inserted2 = document.execCommand("insertText", false, prepend + text + trailing);
+            |        if (inserted2) return;
+            |      } catch (err) {}
+            |    }
+            |    // 兜底: 直接改文本 + input 事件 (普通 contenteditable 可生效; 光标位置未知, 按末尾追加)
+            |    var curText = ce.textContent || "";
+            |    var lastCh = curText.length > 0 ? curText.charAt(curText.length - 1) : "";
+            |    var endPrepend = lastCh.length > 0 && !/\s/.test(lastCh) ? " " : "";
+            |    ce.textContent = curText + endPrepend + text + " ";
             |    ce.dispatchEvent(new Event("input", { bubbles: true }));
             |  }
             |  function pickEditable() {
@@ -593,10 +639,10 @@ class DshToolWindowPanel(
             |    for (var i = textareas.length - 1; i >= 0; i--) {
             |      if (!textareas[i].disabled && !textareas[i].readOnly) { ta = textareas[i]; break; }
             |    }
-            |    if (ta) { appendToTextarea(ta, REF); return; }
+            |    if (ta) { insertIntoTextarea(ta, REF); return; }
             |    // 新版 contenteditable 输入框
             |    var ce = pickEditable();
-            |    if (ce) { appendToContentEditable(ce, REF); return; }
+            |    if (ce) { insertIntoContentEditable(ce, REF); return; }
             |    if (tries++ < MAX_TRIES) { setTimeout(inject, 250); }
             |  }
             |  inject();
