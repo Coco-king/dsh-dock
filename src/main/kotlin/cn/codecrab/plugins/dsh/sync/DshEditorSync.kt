@@ -139,9 +139,10 @@ class DshEditorSync(
         }
     }
 
-    /** 监听主循环: 新版 dsh 走 follow 实时流 (唯一通道), 旧版走 events.mux 事件流 */
+    /** 监听主循环: 先探测 dsh 通道风格 (新版 follow 实时流 / 旧版 events.mux), 有确定结果才定型 */
     private fun runLoop() {
-        if (isRemoteDsh()) {
+        val style = probeRemoteStyleWithRetry()
+        if (style == RpcStyle.REMOTE) {
             // 新版 dsh (0.1.2+): 无 events.mux, 会话事件唯一实时通道是 session/follow 流
             startFollow()
             while (running.get() && !project.isDisposed) {
@@ -171,6 +172,28 @@ class DshEditorSync(
         }
     }
 
+    /**
+     * 探测 RPC 风格直到有确定结果。
+     * 背景: dsh 刚启动时浏览器认证令牌可能晚几百毫秒才输出, 一次探测失败就把新版误判为旧版,
+     * 会走 events.mux 空转并最终提示"不支持"停止 —— 更新后首次打开 IDE 即复现。这里退避重试:
+     * 旧版 dsh 首轮即返回 LEGACY; 新版等令牌就绪后返回 REMOTE; 超时仍未定按旧版处理。
+     */
+    private fun probeRemoteStyleWithRetry(): RpcStyle? {
+        var waited = 0L
+        while (running.get() && !project.isDisposed) {
+            val style = DshWorkspaceApi.rpcStyle(port) ?: run {
+                // 触发一次探测 (探测内部会等待认证令牌并换取 cookie)
+                DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 3000)
+                DshWorkspaceApi.rpcStyle(port)
+            }
+            if (style != null) return style
+            waited += REMOTE_PROBE_RETRY_MS
+            if (waited >= REMOTE_PROBE_MAX_WAIT_MS) return null
+            if (!sleepQuietly(REMOTE_PROBE_RETRY_MS)) return null // 被 stop 打断
+        }
+        return null
+    }
+
     /** 启动 follow 实时流 (内部自带断线重连与会话校准) */
     private fun startFollow() {
         if (follow != null) return
@@ -186,18 +209,13 @@ class DshEditorSync(
         handleSessionEvent(sessionId, event)
     }
 
-    /** dsh 是否为新版 Remote RPC 风格 (探测失败即视为不是, 继续旧路径重试) */
-    private fun isRemoteDsh(): Boolean {
-        // 主动触发一次探测 (session/list 走 Remote 格式)
-        DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 3000)
-        return DshWorkspaceApi.rpcStyle(port) == RpcStyle.REMOTE
-    }
-
-    /** 可被 stop 打断的短睡 */
-    private fun sleepQuietly(ms: Long) {
-        try {
+    /** 可被 stop 打断的短睡; 返回 false 表示被打断 (应退出) */
+    private fun sleepQuietly(ms: Long): Boolean {
+        return try {
             Thread.sleep(ms)
+            running.get()
         } catch (_: InterruptedException) {
+            false
         }
     }
 
@@ -559,6 +577,12 @@ class DshEditorSync(
 
         /** 同一路径两次刷新的最小间隔 (ms): dsh 一次编辑可能拆多个写入事件, 窗口内合并为一次刷新 */
         private const val LAST_SYNC_MIN_INTERVAL_MS = 2000L
+
+        /** 通道风格探测重试间隔 (ms) */
+        private const val REMOTE_PROBE_RETRY_MS = 1000L
+
+        /** 通道风格探测总时长上限 (ms): 60s 内 dsh 认证未就绪则按旧版处理 */
+        private const val REMOTE_PROBE_MAX_WAIT_MS = 60_000L
 
         /** dsh 的文件写入类工具 (tool/call 的 data.name), 其余工具不触发同步 */
         private val WRITING_TOOLS = setOf(
