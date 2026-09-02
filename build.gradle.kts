@@ -107,6 +107,9 @@ intellijPlatform {
 changelog {
     groups.empty()
     repositoryUrl = providers.gradleProperty("pluginRepositoryUrl")
+    // 默认只认严格 SemVer (x.y.z), 放宽以支持 rc 版头 (如 [1.1.0.rc])。
+    // 注意: 解析器会把"第一个捕获组"当版本 key, 因此正则必须用非捕获组 (?:...)。
+    headerParserRegex.set(Regex("""\d+(?:\.\d+)*(?:[._-][A-Za-z0-9]+)*"""))
 }
 
 tasks {

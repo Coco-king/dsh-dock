@@ -1,6 +1,6 @@
 # Changelog / 变更日志
 
-## [1.1.0] - 2026-09-01
+## [1.1.0.rc] - 2026-09-02
 
 ### 中文 (Chinese)
 
@@ -11,6 +11,9 @@
 - **变更（Changed）**：「刷新」立即重载页面，工作空间同步转后台，不再卡顿数秒
 - **变更（Changed）**：右键发送文件路径/选中代码到 DSH 时，引用现在插入到 dsh 输入框的光标处（不再插到输入框末尾），并且路径后自动带一个空格
 - **修复（Fixed）**：修复上次退出未关闭 Dsh Dock 窗口时，下次启动窗口一直空白的问题
+- **修复（Fixed）**：兼容新版 dsh（0.1.2-alpha 起）的认证与 API 变化，恢复工作空间同步与语言跟随，dsh 编辑文件后编辑器即时刷新（旧版 dsh 不受影响）
+- **修复（Fixed）**：修复退出 IDE 时未关闭 Dsh Dock 窗口、再次打开 IDE 后 dsh 上的工作空间可能停在上一个项目的问题——现在只有确认工作空间已切到当前项目才算同步完成，无法确认时会自动重试，不再误报成功
+- **修复（Fixed）**：修复工具窗口打开时预热中的浏览器未能被复用的问题（预热页面加载完成前窗口提前判定预热结束，导致页面重复创建、预热浏览器闲置）
 
 ### English
 
@@ -22,6 +25,8 @@
 - **Changed**: When sending a file path or selected code to DSH from the context menu, the reference is now inserted at the cursor position in the dsh input box (no longer appended to the end), with a trailing space added after the path
 - **Fixed**: Fixed the Dsh Dock window staying empty after an IDE restart when it was left open at the previous shutdown
 - **Fixed**: Compatibility with the new dsh web (0.1.2-alpha onward) authentication and API changes, restoring workspace sync and language following; editors refresh immediately after dsh edits files (older dsh versions are unaffected)
+- **Fixed**: Fixed the workspace staying on the previous project after an IDE restart when the Dsh Dock window was left open at shutdown — the sync now only reports success after the current project is confirmed as the active workspace, and retries automatically when it cannot be confirmed
+- **Fixed**: Fixed the pre-warmed browser not being reused when the tool window opened while warm-up was still running — the window no longer gives up on warm-up before its page is ready, avoiding a duplicate browser and page load
 
 ## [1.0.3] - 2026-08-27
 
