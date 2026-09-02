@@ -151,6 +151,11 @@ object DshWebUiWarmup {
     }
 
     private fun run(project: Project) {
+        // 预热"编排结束"(finished) 与"页面加载任务结束"必须同步: invokeLater 排队后立即返回,
+        // 若此时就置位 finished, 面板的 waitForWarmupThenAdopt 会立刻判定"预热已结束"而回退自建浏览器,
+        // 既浪费刚创建的预热页面, 又让预热浏览器无人接管 (泄漏到 IDE 退出)。因此 finished 由 EDT 任务
+        // 真正执行完 (无论成败) 时置位; 还没排进 EDT 就提前返回/异常时由外层兜底置位。
+        var scheduledEdt = false
         try {
             val settings = DshSettingsState.getInstance()
             val port = settings.currentPort()
@@ -199,7 +204,7 @@ object DshWebUiWarmup {
                 }
             }
             // 3) EDT 创建浏览器 (Swing 组件安全), 挂预热注入 handler 后加载页面
-            SwingUtilities.invokeLater {
+            val edtTask = Runnable {
                 try {
                     val pageLoadedFlag = AtomicBoolean(false)
                     val jbClient = JBCefApp.getInstance().createClient()
@@ -226,7 +231,7 @@ object DshWebUiWarmup {
                         // 期间面板已自行创建 (取走过/本就无预热可复用): 释放刚创建的浏览器
                         if (taken || warmed != null || project.isDisposed) {
                             w.dispose()
-                            return@invokeLater
+                            return@Runnable
                         }
                         warmed = w
                     }
@@ -255,12 +260,23 @@ object DshWebUiWarmup {
                 } catch (t: Throwable) {
                     LOG.warn("webui warmup failed", t)
                     log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
+                } finally {
+                    finished = true
                 }
+            }
+            scheduledEdt = true
+            try {
+                SwingUtilities.invokeLater(edtTask)
+            } catch (t: Throwable) {
+                // EDT 任务排队失败 (罕见): 预热不会再产出页面
+                LOG.warn("webui warmup EDT scheduling failed", t)
+                finished = true
             }
         } catch (t: Throwable) {
             LOG.warn("webui warmup failed", t)
         } finally {
-            finished = true
+            // 未排进 EDT 就提前返回/异常: 预热确实不会再产出页面
+            if (!scheduledEdt) finished = true
         }
     }
 }
