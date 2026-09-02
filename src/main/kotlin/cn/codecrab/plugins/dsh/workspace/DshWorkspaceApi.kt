@@ -28,9 +28,10 @@ import java.util.UUID
  *
  * 流程 (每次加载 WebUI 前调用一次, 幂等):
  *  1. workspace.create {path}            -> 注册项目工作空间 (已存在则幂等返回, created=false)
- *  2. 若刚创建 -> 完成 (新工作空间 createdAt 最新, 自动成为"最近")
- *  3. 若已存在但当前不是"最近工作空间" -> session.create {workspaceId}
+ *  2. 确认「项目是最近工作空间」: 已是最近 -> 完成; 判定失败/非最近 -> session.create {workspaceId}
  *     (新会话 updatedAt 最新, 使其所在工作空间成为"最近"), 页面加载后就会落在项目上
+ *  3. 无法确认 (判定失败且 bump 也失败) -> 返回 null, 由调用方重试 —— 绝不静默宣称已就绪,
+ *     否则页面会按 dsh 的「最近活跃工作空间/上次会话」落到旧项目 (重启 IDE 场景的高发问题)
  *
  * 注: REMOTE 版移除了 workspace.list, "最近工作空间"判定改用 session.list
  * (会话项带 cwd = 工作空间路径 + updatedAt), 见 [computeRecentWorkspace]。
@@ -85,6 +86,12 @@ object DshWorkspaceApi {
      * 确保项目工作空间存在且为"最近", 返回同步结果; 失败返回 null (调用方按现状继续)。
      * 附带做"空白会话卫生": 归档项目工作空间里遗留的空白会话 (空会话, 无内容损失),
      * 避免 dsh 的 connectWorkspace 一直复用旧空白会话、导致"新会话"点了没反应。
+     *
+     * **成功语义 (重要)**: 返回非 null 表示已确认「项目是最近工作空间」—— 要么项目本就是最近,
+     * 要么已通过新建会话把它提升为最近 (dsh 页面按会话 updatedAt 选落点, 新会话必为最近)。
+     * 最近判定失败 (API 抖动/字段缺失) 时优先用新建会话自愈; 自愈也失败则返回 null, 调用方会
+     * 重试或在页面加载后自动重试, 绝不把「无法确认」静默当作成功 —— 否则页面落在上一个项目,
+     * 正是"重启 IDE 后工作空间没切到当前项目"的高发根因 (判定链路恰好赶上 dsh /api 未就绪窗口时)。
      * @param timeoutMs 整个同步过程的软超时 (避免 dsh API 异常时拖慢页面加载)
      */
     fun ensureProjectWorkspace(port: Int, projectDshPath: String?, timeoutMs: Long = 8000): WorkspaceSyncResult? {
@@ -106,31 +113,35 @@ object DshWorkspaceApi {
         val sessionIds = workspace.getAsJsonArray("sessionIds").mapNotNull {
             it.asString.takeIf(String::isNotBlank)
         }
-        val created = value.get("created").asBoolean
-        var bumped = created
+        // 确认「项目是最近工作空间」(新建与已存在统一处理):
+        //  - 判定成功且项目已是最近 -> 无需动作;
+        //  - 判定失败 (recent == null, API 抖动/字段缺失导致不可信) 或项目非最近
+        //    -> 用新建会话 bump: 新会话 updatedAt 最新, 在 session 级 recency 下项目必然成为最近 (自愈);
+        //  - bump 也失败 -> 整次同步不确认, 返回 null 交给调用方重试。
+        var bumped = false
         var sessionItems: JsonArray? = null
-        if (!created) {
-            // 工作空间已存在: 只有当它当前不是"最近工作空间"时才新建会话提升其新鲜度
-            val recent = computeRecentWorkspace(port, workspaceId, projectDshPath, deadline)
-            if (recent == null) {
-                return WorkspaceSyncResult(workspaceId, sessionIds, bumped)
+        val recent = computeRecentWorkspace(port, workspaceId, projectDshPath, deadline)
+        when {
+            recent != null && recent.first -> {
+                // 项目已是最近工作空间: 无需 bump
+                sessionItems = recent.second
             }
-            sessionItems = recent.second
-            if (!recent.first) {
+            else -> {
                 val bump = rpcWithin(
                     port,
                     "session.create",
                     JsonObject().apply { addProperty("workspaceId", workspaceId) },
                     deadline,
                 )
-                if (bump?.ok == true) {
-                    bumped = true
-                    // 新会话立即可归档: 归档不影响"最近"计算 (session.list 含已归档会话),
-                    // 但 connectWorkspace 复用时跳过已归档, 避免它成为被反复复用的旧空白
-                    bump.value?.get("sessionId")?.asString?.let { archiveSession(port, it, deadline) }
-                } else {
-                    LOG.warn("session.create (recency bump) failed: ${bump?.value}")
+                if (bump?.ok != true) {
+                    LOG.warn("session.create (recency bump) failed: ${bump?.value}; workspace sync not confirmed")
+                    return null
                 }
+                bumped = true
+                // 新会话立即可归档: 归档不影响"最近"计算 (session.list 含已归档会话),
+                // 但 connectWorkspace 复用时跳过已归档, 避免它成为被反复复用的旧空白
+                bump.value?.get("sessionId")?.asString?.let { archiveSession(port, it, deadline) }
+                sessionItems = recent?.second
             }
         }
         // 空白会话卫生: 归档项目工作空间里所有遗留空白会话
@@ -197,13 +208,13 @@ object DshWorkspaceApi {
     /**
      * 判断项目工作空间当前是否为"最近工作空间" (false = 需要 bump 提升新鲜度)。
      * 同时带回 session.list 的会话列表, 供空白会话清理复用 (省一次 RPC)。
-     * 返回 null 表示判定失败 (API 不可用), 调用方按现状继续。
+     * 返回 null 表示判定失败 (API 不可用/字段缺失导致结果不可信), 调用方用新建会话 bump 自愈。
      *
-     * 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt" (无会话则取 createdAt), 取最大者。
-     *  - LEGACY: 遍历 workspace.list (含 createdAt 兜底)
+     * 复刻 dsh 客户端的 recentWorkspace: 各工作空间取"最新会话 updatedAt", 取最大者。
+     *  - LEGACY: 遍历 workspace.list + session.list (无会话时用 createdAt 兜底)
      *  - REMOTE: workspace.list 已移除, 改用 session.list 的 cwd (=工作空间路径) + updatedAt;
-     *    项目工作空间无会话时视为"不是最近" (需要 bump —— 与旧版"无会话用 createdAt"
-     *    相比略有偏差: 项目会多 bump 一次, 无副作用, 且只在其他空间有更近会话时发生)
+     *    全局无会话时视为"项目即最近" (无从比较, 不 bump); 有会话但字段缺失导致
+     *    无法比较时返回 null (判定不可信, 交给调用方 bump, 不做静默放行)
      */
     private fun computeRecentWorkspace(
         port: Int,
@@ -215,6 +226,8 @@ object DshWorkspaceApi {
             RpcStyle.REMOTE -> {
                 val s = rpcWithin(port, "session.list", JsonObject(), deadline) ?: return null
                 val sessionItems = s.value?.getAsJsonArray("items") ?: return null
+                // 全局没有任何会话时 (如全新环境): 无从按会话比较, 视为"项目即最近", 不 bump
+                if (sessionItems.isEmpty()) return true to sessionItems
                 // cwd 为 Windows 反斜杠形态, projectDshPath 可能为正斜杠: 比较前统一斜杠
                 val projectCwd = projectDshPath.replace('\\', '/')
                 var projectLatest = Long.MIN_VALUE
@@ -227,7 +240,9 @@ object DshWorkspaceApi {
                         projectLatest = ts
                     }
                 }
-                // 无任何会话时 (globalLatest=MIN) 视为"项目即最近", 不 bump
+                // 有会话却拿不到任何 updatedAt (字段缺失/格式变化): 判定结果不可信,
+                // 返回 null 交给调用方用新建会话 bump 自愈, 不能按"项目即最近"静默放行
+                if (globalLatest == Long.MIN_VALUE) return null
                 (projectLatest >= globalLatest) to sessionItems
             }
             RpcStyle.LEGACY -> {
