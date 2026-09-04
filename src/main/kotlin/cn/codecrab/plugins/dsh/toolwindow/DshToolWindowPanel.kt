@@ -810,7 +810,7 @@ class DshToolWindowPanel(
      * 用 `WindowManager.getFrame(project)` 取本窗口的 JFrame, 与 AWT 键盘焦点窗口比较:
      * 相等则本窗口是活动窗口; 本 JVM 内没有键盘焦点窗口 (单窗口 / 焦点在内嵌浏览器等
      * 原生组件上) 时视为活动, 保证单窗口用户行为与之前完全一致。
-     * 仅用稳定 API (WindowManager.getFrame + AWT KeyboardFocusManager), 跨 IntelliJ 2022.3 起全版本安全。
+     * 仅用稳定 API (WindowManager.getFrame + AWT KeyboardFocusManager), 跨 IntelliJ 2023.1 起全版本安全。
      */
     private fun isActiveWindow(): Boolean {
         return try {

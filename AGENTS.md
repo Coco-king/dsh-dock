@@ -7,7 +7,7 @@
 Dsh Dock 是一个 IntelliJ IDEA 插件：一键启动 DeepSeek Harness（`dsh web`），并把 WebUI 显示在工具窗口内嵌的 JCEF 浏览器中。支持 **WSL 中启动**与 **Windows 直接启动**两种方式。
 
 - 语言：Kotlin（JVM target 11，编译 JDK 21）
-- 兼容：IntelliJ IDEA 2022.3 (223) 及以上（`pluginSinceBuild = 223`，无版本上限）
+- 兼容：IntelliJ IDEA 2023.1 (231) 及以上（`pluginSinceBuild = 231`，无版本上限）
 - 构建：`gradlew buildPlugin`（需要 JDK 17+ 的 Gradle 运行环境；本机 JDK 路径、构建方式等个性化配置见 **AGENTS.local.md**）
 - 开源地址：GitHub <https://github.com/Coco-king/dsh-dock>（`gradle.properties` 的 `pluginRepositoryUrl`）· Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 
@@ -109,4 +109,4 @@ src/main/kotlin/cn/codecrab/plugins/dsh/
 - **JSON 一律对象化，禁止手拼 JSON 字符串**：
   - **构造/序列化**统一用 Gson 对象（`JsonObject` / `JsonArray`，`addProperty` / `add`）后 `toString()`——禁止 `buildString` 拼 `"{\"...\"}"`、手写转义等（曾导致 `body is not JSON`、括号错乱、`parseString` 回退等 bug）；
   - **dsh /api RPC 全程对象化**：信封（`type`/`rpcId`/`method`/`payload`）、RPC payload、新版 `args` 包装一律 `JsonObject` 构造；禁止新增字符串转义辅助方法（如 `jsonString`）；
-  - **反序列化**统一用 `JsonParser.parseString`（Gson 2.8.6+ 提供的静态方法，2022.3 起 IDE 均满足）。
+  - **反序列化**统一用 `JsonParser.parseString`（Gson 2.8.6+ 提供的静态方法，2023.1 起 IDE 均满足）。

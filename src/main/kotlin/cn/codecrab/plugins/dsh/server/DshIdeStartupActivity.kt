@@ -8,35 +8,33 @@ import com.intellij.notification.NotificationType
 import com.intellij.notification.Notifications
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.project.ProjectManagerListener
+import com.intellij.openapi.startup.ProjectActivity
 
 /**
  * 「自动启动时机 = IDEA 启动时」(设置为该模式时生效)。
  *
- * 注册为 ProjectManagerListener 应用级监听 (plugin.xml applicationListeners):
- * 本次 IDE 会话首次打开项目时立即在后台拉起 dsh —— 让 dsh 提前完成启动与端口监听,
- * 并同步预热内嵌浏览器页面 ([DshWebUiWarmup]); 用户首次打开 Dsh Dock 工具窗口时
- * WebUI 已就绪, 显著缩短首次等待时间。
+ * 注册为项目级后台活动 (plugin.xml extensions 的 backgroundPostStartupActivity):
+ * 每个项目打开完成时在后台执行一次, 本次 IDE 会话首次打开项目时立即在后台拉起 dsh ——
+ * 让 dsh 提前完成启动与端口监听, 并同步预热内嵌浏览器页面 ([DshWebUiWarmup]);
+ * 用户首次打开 Dsh Dock 工具窗口时 WebUI 已就绪, 显著缩短首次等待时间。
  *
  * - 每个 IDE 会话只自动启动一次 (仅首次打开项目时触发): 之后用户手动停止 dsh、
  *   再打开其他项目窗口不会被意外重新拉起;
  * - 多项目窗口: 首个打开的项目发起启动, 后续项目因已在启动/运行而自然跳过;
  * - 端口已有外部 dsh: [DshServer.start] 识别端口占用后直接按运行处理, 不重复启动;
  * - 进程生命周期与 IDE 一致: 退出清理复用 [DshServer] 的三层保障, IDE 退出时 dsh 一并停止。
+ *
+ * 说明: 平台已把 ProjectManagerListener.projectOpened 标记为废弃并计划移除 (官方推荐改用
+ * ProjectActivity 后台活动), 本项目最低支持 2023.1, 故直接使用官方推荐的后台活动 API。
  */
-class DshIdeStartupListener : ProjectManagerListener {
+class DshIdeStartupActivity : ProjectActivity {
 
-    /** 本次 IDE 会话是否已处理过自动启动 (仅第一次打开项目时启动, 之后的打开不再触发) */
-    @Volatile
-    private var autoStartedThisSession: Boolean = false
-
-    // projectOpened 在新版平台标记废弃 (推荐 ProjectActivity), 但仍是 2022.3 起全版本可用的
-    // 稳定回调, 各版本均会触发 —— 为兼容 pluginSinceBuild=223 特意保留, 压制废弃覆盖警告
-    @Suppress("OVERRIDE_DEPRECATION")
-    override fun projectOpened(project: Project) {
+    override suspend fun execute(project: Project) {
         val settings = DshSettingsState.getInstance()
         if (settings.startMode != DshSettingsState.START_MODE_IDE) return
         if (autoStartedThisSession) return
+        // 活动在后台执行, 项目可能已被关闭 (避免把本次会话标记为已启动而漏掉后续项目的自动启动)
+        if (project.isDisposed) return
         autoStartedThisSession = true
         if (DshServer.state != DshServer.State.IDLE) {
             // 已在启动/运行 (含外部启动的同端口 dsh): 无需启动 dsh, 但仍预热内嵌浏览器页面
@@ -45,7 +43,7 @@ class DshIdeStartupListener : ProjectManagerListener {
         }
         // 后台启动 dsh 的同时预热内嵌浏览器 (等 dsh 就绪后自动加载 WebUI)
         DshWebUiWarmup.warmupForProject(project)
-        // 后台线程启动, 不阻塞项目打开 (EDT); 启动全流程 (探测/拉起/端口轮询) 均在后台完成
+        // 后台线程启动, 不阻塞项目打开; 启动全流程 (探测/拉起/端口轮询) 均在后台完成
         Thread({ autoStart(project) }, "dsh-plugin-ide-startup").apply { isDaemon = true }.start()
     }
 
@@ -120,6 +118,11 @@ class DshIdeStartupListener : ProjectManagerListener {
     }
 
     companion object {
-        private val LOG = Logger.getInstance(DshIdeStartupListener::class.java)
+        private val LOG = Logger.getInstance(DshIdeStartupActivity::class.java)
+
+        /** 本次 IDE 会话是否已处理过自动启动 (仅第一次打开项目时启动, 之后的打开不再触发);
+         *  活动实例按项目创建, 会话级标记必须放在伴生对象共享 */
+        @Volatile
+        private var autoStartedThisSession: Boolean = false
     }
 }
