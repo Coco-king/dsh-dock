@@ -7,7 +7,7 @@ no terminal or separate browser needed.
 
 **English**
 
-**Version support**: dsh **0.1.0-rc.8 or later** (the latest **0.1.2-alpha** is fully supported)
+**Version support**: dsh **0.1.0-rc.8 or later** (the latest **0.1.2-rc.1** is fully supported)
 
 1. **One-click start of dsh**: Click the whale icon in the right tool window bar to open the Dsh Dock
    tool window and start the DeepSeek Harness assistant (`dsh web`) with one click; the WebUI is shown
@@ -17,7 +17,7 @@ no terminal or separate browser needed.
    configurable ports and extra arguments for each mode
 3. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
    it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes;
-   note the latest dsh (0.1.2-alpha+) requires a launch-token authentication, so an externally
+   note the latest dsh (0.1.2-rc.1+) requires a launch-token authentication, so an externally
    started instance cannot be auto-authenticated (the page shows the auth prompt) — start dsh
    from the plugin instead
 4. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
@@ -37,14 +37,14 @@ no terminal or separate browser needed.
 DeepSeek Harness（dsh）JetBrains IDE 插件（IntelliJ IDEA / PyCharm / WebStorm 等）：一键启动 `dsh web` AI 助手，在 IDE 内置浏览器中直接与
 DeepSeek 模型对话，无需终端、无需另开浏览器。
 
-**版本支持**：dsh **0.1.0-rc.8 及以上**（对最新 **0.1.2-alpha** 完整支持）
+**版本支持**：dsh **0.1.0-rc.8 及以上**（对最新 **0.1.2-rc.1** 完整支持）
 
 1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
    WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
 2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
    两种方式的端口与附加参数可分别配置
 3. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
-   直接在内置浏览器中打开 WebUI，不会重复启动进程；注意新版 dsh（0.1.2-alpha 起）需要
+   直接在内置浏览器中打开 WebUI，不会重复启动进程；注意新版 dsh（0.1.2-rc.1 起）需要
    启动令牌认证，外部启动的实例无法自动认证（页面会停在认证提示页），请改用插件启动
 4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
    其他窗口不会抢占项目空间
@@ -62,7 +62,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ## 功能
 
-- **支持最新版 dsh（0.1.2-alpha）**：完整兼容 dsh 最新版的安全认证、重构后的接口与实时文件同步通道，
+- **支持最新版 dsh（0.1.2-rc.1）**：完整兼容 dsh 最新版的安全认证、重构后的接口与实时文件同步通道，
   开箱即用；旧版 dsh（0.1.0-rc.8 及以上）同样兼容
 - **右侧工具栏鲸鱼图标**：安装后在右侧工具栏出现黑色的 dsh 鲸鱼图标，点击即可打开 Dsh Dock 工具窗口
 - **双启动方式（设置可选）**：
@@ -75,7 +75,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
 - **已启动自动识别**：如果对应端口已被监听（比如你自己已经启动了 dsh），插件会**跳过启动步骤**，
   直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停。
-  注意：新版 dsh（0.1.2-alpha 起）带启动令牌认证，外部启动的实例插件拿不到令牌，页面会停在
+  注意：新版 dsh（0.1.2-rc.1 起）带启动令牌认证，外部启动的实例插件拿不到令牌，页面会停在
   认证提示页（日志有说明）——请通过插件启动 dsh，或手动打开 dsh web 打印的带 token 地址
 - **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台预热 dsh 与内嵌浏览器页面，
   首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止
@@ -213,7 +213,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ## 常见问题
 
-- **页面停在认证提示页（dsh 0.1.2-alpha 起）**：新版 dsh 的 WebUI 需要**启动令牌**完成浏览器认证。
+- **页面停在认证提示页（dsh 0.1.2-rc.1 起）**：新版 dsh 的 WebUI 需要**启动令牌**完成浏览器认证。
   由插件启动的 dsh 会自动完成认证；若 dsh 是外部启动的（插件无法获得其令牌），请**通过插件启动/重启
   dsh**，或手动打开 dsh web 启动时打印的带 `?token=` 地址
 - **WebUI 区域显示空白/加载失败**：确认 `Settings -> Tools -> Web Browsers and Preview` 中

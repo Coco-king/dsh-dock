@@ -20,7 +20,7 @@ import java.util.UUID
  *
  * RPC 传输按 dsh 版本自适应 ([RpcStyle] 探测):
  *  - LEGACY (dsh ≤ 0.1.1):  POST /api/<namespace>.<method>, 扁平 payload
- *  - REMOTE (dsh ≥ 0.1.2-alpha): 端点改为 /api/<namespace>/<method>, payload 改为
+ *  - REMOTE (dsh ≥ 0.1.2-rc.1): 端点改为 /api/<namespace>/<method>, payload 改为
  *    {"args": ...} 包装 (typert @Remote 体系, 参数名随方法不同: request / _request / 直接字段);
  *    返回结构不变 (workspace/create -> {workspace, created} 等), 调用方解析逻辑通用。
  * 请求经 host 的 loopback 信任围栏放行 (Host 为 127.0.0.1/localhost 且不带 Origin 头),
@@ -43,7 +43,7 @@ object DshWorkspaceApi {
     /**
      * RPC 传输风格:
      *  - LEGACY: dsh ≤ 0.1.1 (点号端点 + 扁平 payload)
-     *  - REMOTE: dsh ≥ 0.1.2-alpha (斜杠端点 + args 包装, typert @Remote 体系; workspace.list 已移除)
+     *  - REMOTE: dsh ≥ 0.1.2-rc.1 (斜杠端点 + args 包装, typert @Remote 体系; workspace.list 已移除)
      */
     enum class RpcStyle { LEGACY, REMOTE }
 

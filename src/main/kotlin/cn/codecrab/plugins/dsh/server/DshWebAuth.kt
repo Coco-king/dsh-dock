@@ -6,7 +6,7 @@ import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * dsh 浏览器会话认证 (dsh 0.1.2-alpha 起)。
+ * dsh 浏览器会话认证 (dsh 0.1.2-rc.1 起)。
  *
  * 背景: 新版 dsh 的 WebUI 带进程级启动令牌认证 —— `dsh web` 启动时打印
  * `dsh web: http://127.0.0.1:<port>/?token=<token>`; 首次携带令牌访问首页会

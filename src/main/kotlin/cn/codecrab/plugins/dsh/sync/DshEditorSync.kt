@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  1. 旧版事件流 (dsh ≤ 0.1.1):
  *     - SSE: `GET /api/events.mux`; WebSocket: `ws://127.0.0.1:<port>/api/events.mux`,
  *       不带 Origin 头 (经 loopback 信任围栏放行; 新版 dsh 的 /api 还需认证 cookie)
- *  2. 新版 follow 流 (dsh ≥ 0.1.2-alpha, events.mux 已移除): WebSocket `/api/remote.mux`
+ *  2. 新版 follow 流 (dsh ≥ 0.1.2-rc.1, events.mux 已移除): WebSocket `/api/remote.mux`
  *     上订阅 `session/follow` (每会话一流), 工具事件实时逐条到达 (见 [DshSessionFollow])。
  * 两类方式都不可用时静默降级 (只记一行日志), 绝不影响 WebUI 正常使用。
  *
