@@ -90,6 +90,9 @@ class DshToolWindowPanel(
 
     private var browser: JBCefBrowser? = null
     private var jcefAvailable: Boolean = false
+
+    /** 「点击文件路径在 IDE 中打开」的页面→IDE JS 通道 (随浏览器创建; 接管预热页面时沿用预热建立的) */
+    private var fileOpenChannel: DshWebUiFileOpen.Channel? = null
     private var externalBrowserOpenedForSession: Boolean = false
     private var webUiLoaded: Boolean = false
 
@@ -365,6 +368,8 @@ class DshToolWindowPanel(
     private fun createBrowserHolder(): JComponent {
         val jbClient: JBCefClient = JBCefApp.getInstance().createClient()
         val b: JBCefBrowser = JBCefBrowserBuilder().setClient(jbClient).build()
+        // JS 通道必须在浏览器实体创建 (下方 browserComponent) 之前建立
+        fileOpenChannel = DshWebUiFileOpen.createChannel(b, project, ::appendLog)
         jbClient.addLoadHandler(createInjectLoadHandler(), b.cefBrowser)
         jcefAvailable = true
         browser = b
@@ -419,6 +424,8 @@ class DshToolWindowPanel(
         }
         browser = b
         jcefAvailable = true
+        // 沿用预热时建立的 JS 通道 (浏览器实体已创建, 此时无法再新建可用的通道)
+        fileOpenChannel = warmed.fileOpenChannel
         syncSessionIds = warmed.sessionIds
         lastSyncedPath = warmed.syncedDshPath
         // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
@@ -430,6 +437,8 @@ class DshToolWindowPanel(
             webUiLoaded = true
             pageLoaded = true
             appendLog(DshBundle.message("log.warmup.adopted"))
+            // 预热页面不会再触发 onLoadEnd, 这里补注入一次点击拦截脚本
+            installFileOpenBridge()
             if (workspaceMismatch) {
                 SwingUtilities.invokeLater {
                     if (!project.isDisposed) loadWebUi()
@@ -489,8 +498,15 @@ class DshToolWindowPanel(
                 flushPendingReference()
                 // 工作空间同步失败时, 页面加载完成后自动刷新一次重试 (与手动刷新等效)
                 autoReloadAfterSyncFailure()
+                installFileOpenBridge()
             }
         }
+    }
+
+    /** 注入「点击文件路径在 IDE 中打开」的拦截脚本 (页面加载完成 / 接管已加载的预热页面时调用) */
+    private fun installFileOpenBridge() {
+        val b = browser ?: return
+        fileOpenChannel?.install(b, project)
     }
 
     // ---------- 引用注入 (右键菜单发送) ----------

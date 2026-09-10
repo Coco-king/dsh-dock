@@ -1,5 +1,17 @@
 # Changelog / 变更日志
 
+## [1.3.0] - 2026-09-11
+
+### 中文 (Chinese)
+
+- **新增（Added）**：点击 dsh 界面里的文件路径（含消息中的文件提及、交付卡片的「打开」按钮）时，直接在 IDE 编辑器中打开该文件（能拿到行号时跳到对应行，编辑类工具还会直接定位并选中写入的新内容），不再打开 dsh 的侧边栏预览；文件不在本机、是目录或路径无法解析时仍走 dsh 侧边栏预览。默认开启，可在 `Settings -> Other Settings -> Dsh Dock` 关闭
+- **变更（Changed）**：清理新版 IDE 中已废弃的接口调用，避免将来版本失效（无功能变化）
+
+### English
+
+- **Added**: Clicking any clickable file path in the dsh UI (including file mentions in messages and the Open button on delivered-file cards) now opens the file in the IDE editor (jumping to the line when dsh UI data provides one; editing tools also locate and select the newly written content) instead of the dsh sidebar preview; when the file is not on this machine, is a directory, or the path cannot be resolved, the dsh sidebar preview is still used. Enabled by default and can be turned off under `Settings -> Other Settings -> Dsh Dock`
+- **Changed**: Removed calls to APIs deprecated in the latest IDE versions to avoid future breakage (no functional change)
+
 ## [1.2.1] - 2026-09-11
 
 ### 中文 (Chinese)

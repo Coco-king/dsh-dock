@@ -27,10 +27,13 @@ no terminal or separate browser needed.
 6. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
    tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
    editors update to the new content immediately — no more stale code or reopening files
-7. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
+7. **File paths open in the IDE**: Clicking a file path or the Open button in the dsh WebUI opens
+   the file in the IDE editor (jumping to the line when dsh data provides one, and locating/selecting the new content for edit/write results) instead of the dsh sidebar
+   preview; when the file cannot be resolved there, the dsh preview is used as before
+8. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
-8. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2023.1 and later
-9. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
+9. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2023.1 and later
+10. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
 
@@ -51,9 +54,11 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
 6. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
-7. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-8. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2023.1 及之后版本
-9. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
+7. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径（含文件提及）或「打开」按钮时，直接在 IDE 编辑器中
+   打开该文件（能拿到行号时跳到对应行，编辑/写入工具还会定位并选中写入的新内容），不再使用 dsh 侧边栏预览；文件无法在 IDE 中定位时仍走 dsh 预览
+8. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+9. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2023.1 及之后版本
+10. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址
@@ -94,6 +99,10 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **dsh 编辑后自动刷新**：dsh 的文件写入类工具（Edit / str_replace_editor / write 等）成功执行完时，
   自动刷新对应文件的 VFS 并把已打开的编辑器立即更新为新代码（WSL 模式下 Windows 侧收不到文件变更
   通知的老问题也一并解决）；有未保存修改的文件不会被覆盖；默认开启，可在设置中关闭
+- **点击文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径（如消息中的文件路径、文件提及、交付卡片的「打开」按钮）时，
+  直接在 IDE 编辑器中打开该文件（能拿到行号时跳到对应行，如 read 读取的起始行；编辑/写入工具还会定位并选中新增内容），不再打开 dsh 的侧边栏预览；
+  文件不在本机、是目录或路径无法解析时自动回退为 dsh 的侧边栏预览（不会点了没反应）；
+  默认开启，可在设置中关闭（关闭后恢复 dsh 的侧边栏预览）
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
 - **宽版本支持**：支持 IntelliJ IDEA 2023.1 (231) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE
@@ -157,6 +166,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 | 自动启动 | 启动时机：IDEA 启动时（默认，含内嵌浏览器预热）/ 打开工具窗口时 / 手动启动 | IDEA 启动时 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
 | 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（实时监听 dsh 会话事件，写入成功即刷新） | 开启 |
+| 点击文件路径在 IDE 中打开 | 点击 WebUI 里的文件路径或「打开」按钮时在 IDE 编辑器中打开该文件（关闭则使用 dsh 侧边栏预览） | 开启 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
 | WebUI 语言 | 单选：跟随 IDE 语言 / 简体中文 / English（跟随模式下按 IDE 界面语言自动同步 dsh 语言偏好，如英文 IDE → 英文 WebUI） | 跟随 |
 

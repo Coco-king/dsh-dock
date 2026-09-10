@@ -1,8 +1,8 @@
 package cn.codecrab.plugins.dsh.sync
 
 import cn.codecrab.plugins.dsh.DshBundle
+import cn.codecrab.plugins.dsh.reference.DshReference
 import cn.codecrab.plugins.dsh.server.DshWebAuth
-import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.util.DshIdeName
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi.RpcStyle
@@ -476,27 +476,8 @@ class DshEditorSync(
      * 不一致 (如 BaiCaiERP 与 BaiCaiERP3 是两个不同目录), 但 dsh 编辑的文件只要在本机
      * 文件系统上, IDEA 里打开着它的编辑器就应该同步 —— 换算成功即可刷新。
      */
-    private fun ideaPathOf(dshPath: String): String? {
-        return if (launchMode == DshSettingsState.MODE_WSL) {
-            // 常规 /mnt/<盘符>/... 形态 -> C:/...
-            val m = Regex("^/mnt/([A-Za-z])/(.*)$").matchEntire(dshPath)
-            if (m != null) {
-                "${m.groupValues[1].uppercase()}:/${m.groupValues[2]}"
-            } else {
-                // \\wsl$\<distro>\... 远程项目: dsh 路径为 /..., 用本窗口项目推导 distro
-                val ideaBase = ideaPathBase
-                if (ideaBase != null && ideaBase.startsWith(WSL_NETWORK_PREFIX)) {
-                    val distro = ideaBase.removePrefix(WSL_NETWORK_PREFIX).substringBefore('/')
-                    "$WSL_NETWORK_PREFIX$distro$dshPath"
-                } else {
-                    null // 如 /home/... 等无法确定 Windows 挂载的路径, 跳过
-                }
-            }
-        } else {
-            // Windows 直启: dsh 与 IDEA 同路径
-            dshPath
-        }
-    }
+    private fun ideaPathOf(dshPath: String): String? =
+        DshReference.ideaPathFromDsh(dshPath, launchMode, ideaPathBase)
 
     /** 刷新文件 VFS 并在编辑器打开且无未保存修改时重载文档 (均有兜底, 失败只记日志) */
     /** 同一路径在窗口内 (2s) 已刷新过则跳过: dsh 的一次编辑可能拆成多个写入事件,
@@ -568,9 +549,6 @@ class DshEditorSync(
 
     companion object {
         private const val SSE_DATA_PREFIX = "data: "
-
-        /** \\wsl$\<distro>\ 前缀 (反斜杠形式, 与 IDEA 路径一致) */
-        private const val WSL_NETWORK_PREFIX = "//wsl$/"
 
         /** 连续失败多少次后判定"当前 dsh 不支持事件流", 停止重试 */
         private const val MAX_CONSECUTIVE_FAILURES = 5

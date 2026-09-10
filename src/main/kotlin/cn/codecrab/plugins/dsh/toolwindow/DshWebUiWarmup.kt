@@ -55,6 +55,8 @@ object DshWebUiWarmup {
         /** 同步得到的会话 id (供面板接管后清除"不属于本项目"的持久化会话) */
         val sessionIds: List<String>?,
         private val pageLoadedFlag: AtomicBoolean,
+        /** 页面→IDE 的 JS 通道 (「点击文件路径在 IDE 中打开」用; 必须在浏览器创建前建立, 只能随浏览器一起移交) */
+        val fileOpenChannel: DshWebUiFileOpen.Channel?,
     ) {
         /** 主框架是否已加载完成 (预热 onLoadEnd 置位; 面板按此决定能否整页复用) */
         val pageLoaded: Boolean
@@ -212,6 +214,9 @@ object DshWebUiWarmup {
                     val pageLoadedFlag = AtomicBoolean(false)
                     val jbClient = JBCefApp.getInstance().createClient()
                     val b = JBCefBrowserBuilder().setClient(jbClient).build()
+                    // JS 通道必须在浏览器实体创建前建立 (见 DshWebUiFileOpen.createChannel);
+                    // 拦截脚本由接管该页面的面板注入
+                    val fileOpenChannel = DshWebUiFileOpen.createChannel(b, project, ::log)
                     val handler = object : CefLoadHandlerAdapter() {
                         override fun onLoadStart(
                             browser: CefBrowser,
@@ -229,7 +234,7 @@ object DshWebUiWarmup {
                             if (frame.isMain) pageLoadedFlag.set(true)
                         }
                     }
-                    val w = Warmed(jbClient, b, handler, port, syncedPath, sessionIds, pageLoadedFlag)
+                    val w = Warmed(jbClient, b, handler, port, syncedPath, sessionIds, pageLoadedFlag, fileOpenChannel)
                     synchronized(lock) {
                         // 期间面板已自行创建 (取走过/本就无预热可复用): 释放刚创建的浏览器
                         if (taken || warmed != null || project.isDisposed) {

@@ -19,6 +19,9 @@ import com.intellij.openapi.vfs.VirtualFile
  */
 object DshReference {
 
+    /** WSL 远程项目在 Windows 侧的 UNC 前缀 (`\\wsl$\<distro>\...`) */
+    private const val WSL_UNC_PREFIX = "//wsl$/"
+
     /** 把 IDEA 的 VirtualFile 转换为 dsh 进程可见的路径 */
     fun dshPath(file: VirtualFile, launchMode: String): String =
         dshPathFromString(file.path, launchMode) ?: ""
@@ -28,6 +31,37 @@ object DshReference {
         if (path.isNullOrBlank()) return null
         val raw = path.replace('\\', '/')
         return if (launchMode == DshSettingsState.MODE_WSL) WslSupport.toWslPath(raw) ?: raw else raw
+    }
+
+    /**
+     * [dshPathFromString] 的逆运算: 把 dsh 进程可见的路径换算回 IDEA 侧路径;
+     * 无法可靠换算 (不在本机可寻址范围) 返回 null。dsh 回传的路径 (如它界面上显示的文件路径)
+     * 用它换算后再交给 IDEA 打开/刷新。
+     *
+     * - WSL 模式: `/mnt/<盘符>/...` -> `<盘符>:/...`; 项目本身是 `\\wsl$\<distro>\...`
+     *   远程项目时按 [ideaBasePath] 推导发行版, `/home/...` 换回 `//wsl$/<distro>/home/...`;
+     *   其他 (如 WSL 家目录而项目不在 WSL 中) 无法确定 Windows 挂载位置, 返回 null
+     * - Windows 模式: dsh 与 IDEA 同路径, 原样返回
+     */
+    fun ideaPathFromDsh(dshPath: String, launchMode: String, ideaBasePath: String?): String? {
+        if (dshPath.isBlank()) return null
+        return if (launchMode == DshSettingsState.MODE_WSL) {
+            // 常规 /mnt/<盘符>/... 形态 -> C:/...
+            val drive = Regex("^/mnt/([A-Za-z])/(.*)$").matchEntire(dshPath)
+            if (drive != null) {
+                "${drive.groupValues[1].uppercase()}:/${drive.groupValues[2]}"
+            } else {
+                val base = ideaBasePath?.replace('\\', '/')
+                if (base != null && base.startsWith(WSL_UNC_PREFIX)) {
+                    val distro = base.removePrefix(WSL_UNC_PREFIX).substringBefore('/')
+                    "$WSL_UNC_PREFIX$distro$dshPath"
+                } else {
+                    null
+                }
+            }
+        } else {
+            dshPath
+        }
     }
 
     /** 文件引用: `@<path>` */

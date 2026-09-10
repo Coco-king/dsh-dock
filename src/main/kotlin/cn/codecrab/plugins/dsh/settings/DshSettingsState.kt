@@ -45,6 +45,10 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     /** dsh WebUI 主题跟随 IDE (暗色 IDE 时强制 WebUI 深色) */
     var themeFollowIde: Boolean = true
 
+    /** 点击 WebUI 里的文件路径 / 「打开」按钮时, 在 IDE 编辑器中打开该文件
+     *  (关闭则沿用 dsh 自带的侧边栏预览) */
+    var openFileInIde: Boolean = true
+
     /** dsh WebUI 语言: "" = 跟随浏览器/IDE; "zh-CN" = 中文; "en" = English */
     var forceLocale: String = ""
 
@@ -73,6 +77,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
         openExternalBrowser = state.openExternalBrowser
         syncEditedFiles = state.syncEditedFiles
         themeFollowIde = state.themeFollowIde
+        openFileInIde = state.openFileInIde
         forceLocale = state.forceLocale
     }
 

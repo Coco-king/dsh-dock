@@ -36,6 +36,7 @@ class DshSettingsConfigurable : Configurable {
     private var startManualField: JRadioButton? = null
     private var openExternalField: JCheckBox? = null
     private var syncEditedFilesField: JCheckBox? = null
+    private var openFileInIdeField: JCheckBox? = null
     private var themeFollowField: JCheckBox? = null
     private var launchWslField: JRadioButton? = null
     private var launchWindowsField: JRadioButton? = null
@@ -78,6 +79,7 @@ class DshSettingsConfigurable : Configurable {
         openExternalField = JCheckBox(DshBundle.message("settings.openExternalBrowser"))
         themeFollowField = JCheckBox(DshBundle.message("settings.themeFollow"))
         syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles", ideName))
+        openFileInIdeField = JCheckBox(DshBundle.message("settings.openFileInIde", ideName))
 
         launchWslField = JRadioButton(DshBundle.message("settings.mode.wsl"))
         launchWindowsField = JRadioButton(DshBundle.message("settings.mode.windows"))
@@ -109,6 +111,7 @@ class DshSettingsConfigurable : Configurable {
         y = fullWidth(y, openExternalField!!)
         y = fullWidth(y, themeFollowField!!)
         y = fullWidth(y, syncEditedFilesField!!)
+        y = fullWidth(y, openFileInIdeField!!)
         y = fullWidth(y, TitledSeparator(DshBundle.message("settings.modeSeparator")))
         y = fullWidth(y, modePanel(launchWslField!!, wslPortField!!, wslExtraArgsField!!))
         y = fullWidth(y, modePanel(launchWindowsField!!, windowsPortField!!, windowsExtraArgsField!!))
@@ -181,6 +184,7 @@ class DshSettingsConfigurable : Configurable {
         return startModeSelected() != s.startMode ||
             openExternalField?.isSelected != s.openExternalBrowser ||
             syncEditedFilesField?.isSelected != s.syncEditedFiles ||
+            openFileInIdeField?.isSelected != s.openFileInIde ||
             themeFollowField?.isSelected != s.themeFollowIde ||
             wslPortField?.text?.toIntOrNull() != s.wslPort ||
             wslExtraArgsField?.text?.trim() != s.wslExtraDshArgs ||
@@ -195,6 +199,7 @@ class DshSettingsConfigurable : Configurable {
         s.startMode = startModeSelected()
         s.openExternalBrowser = openExternalField?.isSelected ?: s.openExternalBrowser
         s.syncEditedFiles = syncEditedFilesField?.isSelected ?: s.syncEditedFiles
+        s.openFileInIde = openFileInIdeField?.isSelected ?: s.openFileInIde
         s.themeFollowIde = themeFollowField?.isSelected ?: s.themeFollowIde
         s.wslPort = wslPortField?.text?.toIntOrNull() ?: s.wslPort
         s.windowsPort = windowsPortField?.text?.toIntOrNull() ?: s.windowsPort
@@ -220,6 +225,7 @@ class DshSettingsConfigurable : Configurable {
         startManualField?.isSelected = s.startMode == DshSettingsState.START_MODE_MANUAL
         openExternalField?.isSelected = s.openExternalBrowser
         syncEditedFilesField?.isSelected = s.syncEditedFiles
+        openFileInIdeField?.isSelected = s.openFileInIde
         themeFollowField?.isSelected = s.themeFollowIde
         wslPortField?.text = s.wslPort.toString()
         wslExtraArgsField?.text = s.wslExtraDshArgs
@@ -253,6 +259,7 @@ class DshSettingsConfigurable : Configurable {
         startManualField = null
         openExternalField = null
         syncEditedFilesField = null
+        openFileInIdeField = null
         themeFollowField = null
         launchWslField = null
         launchWindowsField = null
