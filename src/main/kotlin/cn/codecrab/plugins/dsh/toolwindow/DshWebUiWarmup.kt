@@ -4,6 +4,7 @@ import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.reference.DshReference
 import cn.codecrab.plugins.dsh.server.DshServer
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.util.DshJcefSupport
 import cn.codecrab.plugins.dsh.util.WslSupport
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import com.intellij.openapi.diagnostic.Logger
@@ -105,7 +106,9 @@ object DshWebUiWarmup {
         if (settings.startMode != DshSettingsState.START_MODE_IDE) return
         // 面板已存在 (如工具窗口随项目自动恢复): 页面由面板自己管理, 不重复预热
         if (DshToolWindowRegistry.hasAnyPanel()) return
-        if (!JBCefApp.isSupported()) return // JCEF 不可用: 交由面板的回退 UI 处理
+        // JCEF 可用性必须经 DshJcefSupport 反射探测: 直接调用 JBCefApp 在未提供 JCEF 的
+        // IDE (2026.2 起 JCEF 为独立模块) 上会抛 NoClassDefFoundError, 中断插件启动活动
+        if (!DshJcefSupport.isAvailable) return // JCEF 不可用: 交由面板的回退 UI 处理
         synchronized(lock) {
             if (started) return
             started = true

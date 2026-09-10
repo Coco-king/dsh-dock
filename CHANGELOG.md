@@ -1,5 +1,15 @@
 # Changelog / 变更日志
 
+## [1.2.1] - 2026-09-11
+
+### 中文 (Chinese)
+
+- **修复（Fixed）**：兼容 IntelliJ IDEA 2026.2 及以上版本——内嵌浏览器改由 IDE 的独立组件提供，此前插件在这些版本上启动会报错、工具窗口无法显示内嵌浏览器；现已恢复正常，2023.1 起的旧版本不受影响
+
+### English
+
+- **Fixed**: Compatibility with IntelliJ IDEA 2026.2 and later — the embedded browser is now provided as a separate IDE component, which previously caused a startup error and left the tool window without an embedded browser on those versions; both work again, and older versions from 2023.1 remain unaffected
+
 ## [1.2.0] - 2026-09-10
 
 ### 中文 (Chinese)
