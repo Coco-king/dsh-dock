@@ -1,0 +1,9 @@
+<!-- JCEF 可选依赖的附加描述文件 (plugin.xml 的 <depends optional="true" config-file="..."> 引用)。
+
+     平台要求可选依赖必须声明 config-file (Marketplace 校验告警); 本插件声明 JCEF 可选依赖
+     仅为把 com.intellij.ui.jcef.* 纳入类路径 (2026.2 起 JCEF 是独立模块), 并不向 JCEF
+     注册任何扩展, 因此本文件保持为空; 仅在 JCEF 模块存在时才会被加载。
+     类路径访问与否对本插件无碍: JCEF 不可用时由系统浏览器兜底 (见 DshJcefSupport)。 -->
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij"/>
+</idea-plugin>

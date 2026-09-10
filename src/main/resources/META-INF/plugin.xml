@@ -10,8 +10,10 @@
     <!-- 内嵌浏览器 (JCEF): 2026.2 起 JCEF 从平台核心拆分为独立模块, 未声明该依赖的插件
          拿不到 com.intellij.ui.jcef.* (启动即报 NoClassDefFoundError)。
          该依赖别名自 2025.3.1 起才提供, 且 JCEF 在部分环境本就不可用 —— 故声明为可选:
-         存在时把 JCEF 纳入插件类路径; 不存在时插件照常加载, 由系统浏览器兜底 -->
-    <depends optional="true">com.intellij.modules.jcef</depends>
+         存在时把 JCEF 纳入插件类路径; 不存在时插件照常加载, 由系统浏览器兜底。
+         config-file 指向的可选描述文件 (dsh-idea-plugin-jcef.xml) 为空: 本插件不向 JCEF
+         注册扩展, 仅需其类可见 (Marketplace 校验要求可选依赖必须声明 config-file) -->
+    <depends optional="true" config-file="dsh-idea-plugin-jcef.xml">com.intellij.modules.jcef</depends>
 
     <resource-bundle>messages.DshBundle</resource-bundle>
 
