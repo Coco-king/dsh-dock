@@ -12,6 +12,7 @@ import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 
 /**
@@ -114,9 +115,10 @@ object DshWebUiFileOpen {
      * "window.cefQuery_... is not a function")。
      */
     fun createChannel(browser: JBCefBrowser, project: Project, onLog: (String) -> Unit): Channel? = try {
-        // 用旧重载 create(JBCefBrowser): 新的 create(JBCefBrowserBase) 在最低支持版本 (2023.1) 上未必存在
-        @Suppress("DEPRECATION")
-        val query = JBCefJSQuery.create(browser)
+        // 使用非废弃的 create(JBCefBrowserBase): JBCefBrowser 是该基类的子类, 显式转型以避开
+        // 已标"计划移除"的旧重载 (Marketplace 校验告警); 旧重载在 2023.1 上同样可用,
+        // 若未来最低版本提升可去掉转型
+        val query = JBCefJSQuery.create(browser as JBCefBrowserBase)
         val channel = Channel(query, project, onLog)
         query.addHandler { path -> channel.handle(path) }
         channel
