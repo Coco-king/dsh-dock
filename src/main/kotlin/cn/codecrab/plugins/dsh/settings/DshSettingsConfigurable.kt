@@ -79,7 +79,7 @@ class DshSettingsConfigurable : Configurable {
         openExternalField = JCheckBox(DshBundle.message("settings.openExternalBrowser"))
         themeFollowField = JCheckBox(DshBundle.message("settings.themeFollow"))
         syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles", ideName))
-        openFileInIdeField = JCheckBox(DshBundle.message("settings.openFileInIde", ideName))
+        openFileInIdeField = JCheckBox(DshBundle.message("settings.openFileInIde"))
 
         launchWslField = JRadioButton(DshBundle.message("settings.mode.wsl"))
         launchWindowsField = JRadioButton(DshBundle.message("settings.mode.windows"))

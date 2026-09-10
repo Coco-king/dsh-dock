@@ -4,7 +4,7 @@
 
 ### 中文 (Chinese)
 
-- **新增（Added）**：点击 dsh 界面里的文件路径（含消息中的文件提及、交付卡片的「打开」按钮）时，直接在 IDE 编辑器中打开该文件——能拿到行号时跳到对应行（如 read 工具的读取起始行），编辑/写入工具还会定位并选中写入的新内容；文件不在本机、是目录或路径无法解析时仍走 dsh 侧边栏预览。默认开启，可在 `Settings -> Other Settings -> Dsh Dock` 关闭
+- **新增（Added）**：点击 dsh 界面里的文件路径（含文件提及与「打开」按钮）时在 IDE 编辑器中打开该文件，可定位到行号或编辑写入的新内容；打不开时仍走 dsh 侧边栏预览。默认开启，可在设置中关闭
 - **变更（Changed）**：最低支持版本提升到 IntelliJ IDEA 2023.1（231）——「自动启动」改用平台推荐的新机制，不再依赖将于未来移除的旧 API（2022.3 用户请升级 IDE）
 - **变更（Changed）**：兼容最新版 dsh（0.1.5-rc.1），插件已针对该版本完成适配验证（dsh 0.1.0-rc.8 及以上版本均受支持）
 - **变更（Changed）**：清理新版 IDE 中已废弃的接口调用，避免将来版本失效（无功能变化）
@@ -12,7 +12,7 @@
 
 ### English
 
-- **Added**: Clicking any clickable file path in the dsh UI (including file mentions in messages and the Open button on delivered-file cards) now opens the file in the IDE editor — jumping to the line when dsh UI data provides one (e.g. the line a read tool started from), and locating/selecting the newly written content for edit/write results; when the file is not on this machine, is a directory, or the path cannot be resolved, the dsh sidebar preview is still used. Enabled by default and can be turned off under `Settings -> Other Settings -> Dsh Dock`
+- **Added**: Clicking a file path in the dsh UI (file mentions and the Open button included) now opens the file in the IDE editor, jumping to the line or the newly written content when known, and falls back to the dsh sidebar preview when the file cannot be opened. Enabled by default and can be turned off in settings
 - **Changed**: Minimum supported version raised to IntelliJ IDEA 2023.1 (231) — the "Auto-start" feature now uses the platform-recommended mechanism and no longer relies on an API scheduled for removal (users on 2022.3 should upgrade their IDE)
 - **Changed**: Compatible with the latest dsh (0.1.5-rc.1) — verified against this release (all dsh versions from 0.1.0-rc.8 onward are supported)
 - **Changed**: Removed calls to APIs deprecated in the latest IDE versions to avoid future breakage (no functional change)
