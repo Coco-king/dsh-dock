@@ -1,14 +1,16 @@
 # Changelog / 变更日志
 
-## [Unreleased]
+## [1.2.0] - 2026-09-10
 
 ### 中文 (Chinese)
 
 - **变更（Changed）**：最低支持版本提升到 IntelliJ IDEA 2023.1（231）——「自动启动」改用平台推荐的新机制，不再依赖将于未来移除的旧 API（2022.3 用户请升级 IDE）
+- **变更（Changed）**：兼容最新版 dsh（0.1.5-rc.1），插件已针对该版本完成适配验证（dsh 0.1.0-rc.8 及以上版本均受支持）
 
 ### English
 
 - **Changed**: Minimum supported version raised to IntelliJ IDEA 2023.1 (231) — the "Auto-start" feature now uses the platform-recommended mechanism and no longer relies on an API scheduled for removal (users on 2022.3 should upgrade their IDE)
+- **Changed**: Compatible with the latest dsh (0.1.5-rc.1) — verified against this release (all dsh versions from 0.1.0-rc.8 onward are supported)
 
 ## [1.1.0] - 2026-09-04
 
