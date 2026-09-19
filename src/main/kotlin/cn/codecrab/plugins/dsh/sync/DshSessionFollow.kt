@@ -122,7 +122,7 @@ class DshSessionFollow(
                 .newWebSocketBuilder()
                 .connectTimeout(Duration.ofSeconds(3))
             cookie?.let { builder.header("Cookie", it) }
-            builder.buildAsync(URI("ws://127.0.0.1:$port/api/remote.mux"), listener(latch))
+            builder.buildAsync(URI("ws://${DshWebAuth.authority(port)}/api/remote.mux"), listener(latch))
                 .get(5, TimeUnit.SECONDS)
         } catch (t: Throwable) {
             LOG.warn("dsh follow connect failed", t)

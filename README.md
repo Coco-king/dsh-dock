@@ -17,9 +17,10 @@ no terminal or separate browser needed.
    configurable ports and extra arguments for each mode
 3. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
    it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes;
-   note the latest dsh (0.1.2-rc.1+) requires a launch-token authentication, so an externally
-   started instance cannot be auto-authenticated (the page shows the auth prompt) — start dsh
-   from the plugin instead
+   note the latest dsh (0.1.2-rc.1+) requires a launch-token authentication, so when the plugin has no
+   token it borrows the auth cookie the built-in browser already holds and everything (workspace
+   following, language and file sync) keeps working; only when no cookie is available does the page
+   show the auth prompt — start (or restart) dsh from the plugin in that case
 4. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
    with multiple open windows it follows the **active window**, so other windows never hijack the project space
 5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
@@ -50,7 +51,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    两种方式的端口与附加参数可分别配置
 3. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
    直接在内置浏览器中打开 WebUI，不会重复启动进程；注意新版 dsh（0.1.2-rc.1 起）需要
-   启动令牌认证，外部启动的实例无法自动认证（页面会停在认证提示页），请改用插件启动
+   启动令牌认证，插件拿不到令牌时会**借用内置浏览器里已有的认证 cookie**，工作空间跟随、
+   语言与文件同步都照常工作；只有浏览器里也没有可用 cookie 时页面才会停在认证提示页，
+   这种情况请通过插件启动（或重启）dsh
 4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
    其他窗口不会抢占项目空间
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
@@ -84,8 +87,10 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
 - **已启动自动识别**：如果对应端口已被监听（比如你自己已经启动了 dsh），插件会**跳过启动步骤**，
   直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停。
-  注意：新版 dsh（0.1.2-rc.1 起）带启动令牌认证，外部启动的实例插件拿不到令牌，页面会停在
-  认证提示页（日志有说明）——请通过插件启动 dsh，或手动打开 dsh web 打印的带 token 地址
+  注意：新版 dsh（0.1.2-rc.1 起）带启动令牌认证，插件拿不到令牌时（dsh 由上次 IDE 会话或外部启动）
+  会**借用内置浏览器里已有的认证 cookie**（浏览器认证过就还有效），工作空间跟随、语言与文件同步
+  照常工作；只有浏览器里也没有可用 cookie 时，页面才会停在认证提示页（日志有说明）——
+  这种情况请通过插件启动或重启 dsh
 - **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台预热 dsh 与内嵌浏览器页面，
   首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止。
   多窗口时**每个项目窗口各自在后台预热自己的一份浏览器**：哪个窗口首次打开工具窗口都是直接复用，

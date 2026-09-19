@@ -76,8 +76,13 @@ object DshWorkspaceApi {
     /** 当前端口的 RPC 风格 (未探测过返回 null) */
     fun rpcStyle(port: Int): RpcStyle? = styleCache[port]
 
-    /** 该端口最近是否被认证拒绝 (401): 同步失败时据此判断"重试/刷新无用" */
-    fun authRejected(port: Int): Boolean = authRejected[port] == true
+    /**
+     * 该端口当前是否"认证不可用": 最近一次调用被 401 拒绝 **且现在没有任何可用认证 cookie**。
+     *
+     * 注意带 [DshWebAuth.hasCookie] 判断: 之后若从内嵌浏览器借到了认证 cookie (见 DshJcefCookies),
+     * 或 dsh 重新启动换到了新令牌, 就不能再按"认证不可用"处理 —— 那时重试是有意义的。
+     */
+    fun authRejected(port: Int): Boolean = authRejected[port] == true && !DshWebAuth.hasCookie(port)
 
     /** dsh 停止时清空探测缓存 (下次启动重新探测) */
     fun invalidateStyle(port: Int) {
@@ -442,13 +447,27 @@ object DshWorkspaceApi {
 
     private class PostResult(val status: Int, val text: String?)
 
-    /** 单次 HTTP POST; 传输失败返回 null, 成功/已知状态码返回 (status, body) */
+    /**
+     * 单次 HTTP POST; 传输失败返回 null, 成功/已知状态码返回 (status, body)。
+     *
+     * 地址用 [DshWebAuth.authority] 的 `localhost:<port>` (与内嵌浏览器加载的页面同一 authority):
+     * dsh 的认证 cookie 按 authority 绑定, 只有和页面一致的 authority 才能复用浏览器 cookie
+     * 仓里的 cookie (dsh 不是本插件启动时, 那是唯一的认证来源)。
+     * localhost 不可达 (个别环境只监听 IPv4 且解析顺序不同) 时退回 `127.0.0.1` 再试一次。
+     */
     private fun postOnce(port: Int, method: String, body: String, cookie: String?): PostResult? {
+        val primary = requestOnce("http://${DshWebAuth.authority(port)}/api/$method", method, body, cookie)
+        if (primary != null) return primary
+        return requestOnce("http://127.0.0.1:$port/api/$method", method, body, cookie)
+    }
+
+    /** 对单个地址发起一次 POST; 传输失败 (未拿到 HTTP 状态) 返回 null */
+    private fun requestOnce(url: String, method: String, body: String, cookie: String?): PostResult? {
         var conn: HttpURLConnection? = null
         return try {
             // URL(String) 构造器已废弃 (Java 20+), 改用 URI.toURL()
-            val url = java.net.URI("http://127.0.0.1:$port/api/$method").toURL()
-            conn = url.openConnection() as HttpURLConnection
+            val target = java.net.URI(url).toURL()
+            conn = target.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.connectTimeout = 2000
             conn.readTimeout = 4000
@@ -469,11 +488,11 @@ object DshWorkspaceApi {
                 } catch (_: Throwable) {
                     null
                 }
-                LOG.warn("dsh api $method -> HTTP $code, body=${body.take(240)}, resp=${resp?.take(160)}")
+                LOG.warn("dsh api $method -> HTTP $code, url=$url, body=${body.take(240)}, resp=${resp?.take(160)}")
             }
             PostResult(code, text)
         } catch (t: Throwable) {
-            LOG.warn("dsh api $method failed", t)
+            LOG.warn("dsh api $method failed (url=$url)", t)
             null
         } finally {
             try {

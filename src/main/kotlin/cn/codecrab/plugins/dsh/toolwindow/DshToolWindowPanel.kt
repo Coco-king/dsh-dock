@@ -9,6 +9,7 @@ import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.sync.DshEditorSync
 import cn.codecrab.plugins.dsh.util.DshDisposer
 import cn.codecrab.plugins.dsh.util.DshIdeName
+import cn.codecrab.plugins.dsh.util.DshJcefCookies
 import cn.codecrab.plugins.dsh.util.WslSupport
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import com.intellij.notification.NotificationGroupManager
@@ -552,12 +553,22 @@ class DshToolWindowPanel(
 
     /**
      * 页面脚本注入 (页面加载完成 / 接管已加载的预热页面时调用, 重复调用幂等):
-     * 「点击文件路径在 IDE 中打开」的点击拦截 + 侧边栏会话列表定位
+     * 「点击文件路径在 IDE 中打开」的点击拦截 + 侧边栏会话列表定位。
+     *
+     * 页面加载完成也是"借认证 cookie"的好时机: dsh 不是本插件启动的 (上次会话/外部启动) 时
+     * 插件没有启动令牌, 此时从内嵌浏览器的 cookie 仓借浏览器已拿到的认证 cookie, 借到就补一次
+     * 工作空间核对 (确实需要切换才刷新页面) —— 让工作空间跟随、语言、文件同步恢复可用。
      */
     private fun installPageScripts() {
         val b = browser ?: return
         fileOpenChannel?.install(b, project)
         DshWebUiSidebarLocate.install(b, ::appendLog)
+        DshJcefCookies.adoptAuthCookieAsync(settings.currentPort()) {
+            appendLog(DshBundle.message("log.authCookieAdopted"))
+            SwingUtilities.invokeLater {
+                if (!project.isDisposed) loadWebUi(reloadOnlyWhenBumped = true)
+            }
+        }
     }
 
     // ---------- 引用注入 (右键菜单发送) ----------

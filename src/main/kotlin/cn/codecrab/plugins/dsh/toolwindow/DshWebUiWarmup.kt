@@ -3,7 +3,9 @@ package cn.codecrab.plugins.dsh.toolwindow
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.reference.DshReference
 import cn.codecrab.plugins.dsh.server.DshServer
+import cn.codecrab.plugins.dsh.server.DshWebAuth
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
+import cn.codecrab.plugins.dsh.util.DshJcefCookies
 import cn.codecrab.plugins.dsh.util.DshJcefSupport
 import cn.codecrab.plugins.dsh.util.WslSupport
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
@@ -208,6 +210,22 @@ object DshWebUiWarmup {
         }
     }
 
+    /**
+     * 从内嵌浏览器的 cookie 仓借 dsh 认证 cookie (dsh 不是本次插件启动的、插件没有启动令牌时,
+     * 见 [DshWebAuth.adoptCookie]): 借到则后续同步/语言/事件流都能正常认证。
+     * 只允许后台线程调用 (内部会等 CEF 线程上的 cookie 访问回调, 最多 2s)。
+     */
+    private fun adoptBrowserAuthCookie(port: Int) {
+        try {
+            if (DshWebAuth.cookieHeader(port) != null) return // 已有可用认证, 无需借
+            if (DshJcefCookies.adoptAuthCookie(port)) {
+                log(DshBundle.message("log.authCookieAdopted"))
+            }
+        } catch (t: Throwable) {
+            LOG.warn("adopt the browser auth cookie failed", t)
+        }
+    }
+
     /** 日志时间戳格式 (DateTimeFormatter 不可变、线程安全, 可复用) */
     private val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
 
@@ -246,6 +264,10 @@ object DshWebUiWarmup {
             sequenceLock.lock()
             try {
                 if (project.isDisposed) return
+                // dsh 不是本次插件启动的 (上次 IDE 会话/外部启动) 时插件没有启动令牌:
+                // 先尝试从内嵌浏览器的 cookie 仓借认证 cookie —— 借到则本次同步就能正常进行
+                // (工作空间与语言都正确), 借不到只保持原样 (页面本身仍能用浏览器自带的 cookie)
+                adoptBrowserAuthCookie(port)
                 // 工作空间同步 + 语言偏好 (与面板 loadWebUi 同序), 让预热加载的页面直接落在本项目上
                 val dshPath = project.basePath?.let { DshReference.dshPathFromString(it, settings.launchMode) }
                 var sessionIds: List<String>? = null
@@ -335,7 +357,14 @@ object DshWebUiWarmup {
                     }
 
                     override fun onLoadEnd(browser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
-                        if (frame.isMain) pageLoadedFlag.set(true)
+                        if (frame.isMain) {
+                            pageLoadedFlag.set(true)
+                            // 页面加载完成: 浏览器可能刚拿到/刷新了认证 cookie (无启动令牌时的
+                            // 兜底认证来源), 异步借过来供面板同步使用 (CEF 回调里不能同步等待)
+                            DshJcefCookies.adoptAuthCookieAsync(port) {
+                                log(DshBundle.message("log.authCookieAdopted"))
+                            }
+                        }
                     }
                 }
                 val w = Warmed(project, jbClient, b, handler, port, syncedPath, sessionIds, pageLoadedFlag, fileOpenChannel)

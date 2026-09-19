@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * 传输按 dsh 版本自适应:
  *  1. 旧版事件流 (dsh ≤ 0.1.1):
- *     - SSE: `GET /api/events.mux`; WebSocket: `ws://127.0.0.1:<port>/api/events.mux`,
+ *     - SSE: `GET /api/events.mux`; WebSocket: `ws://localhost:<port>/api/events.mux`,
  *       不带 Origin 头 (经 loopback 信任围栏放行; 新版 dsh 的 /api 还需认证 cookie)
  *  2. 新版 follow 流 (dsh ≥ 0.1.2-rc.1, events.mux 已移除): WebSocket `/api/remote.mux`
  *     上订阅 `session/follow` (每会话一流), 工具事件实时逐条到达 (见 [DshSessionFollow])。
@@ -233,7 +233,7 @@ class DshEditorSync(
         // 1) 先试 SSE (旧版 dsh): GET /api/events.mux
         if (trySseStream()) return true
         if (!running.get()) return false
-        // 2) 再试 WebSocket (新版 dsh): ws://127.0.0.1:<port>/api/events.mux
+        // 2) 再试 WebSocket (新版 dsh): ws://localhost:<port>/api/events.mux
         return tryWsStream()
     }
 
@@ -251,7 +251,7 @@ class DshEditorSync(
     private fun trySseStream(): Boolean {
         var conn: HttpURLConnection? = null
         return try {
-            val url = URI("http://127.0.0.1:$port/api/events.mux").toURL()
+            val url = URI("http://${DshWebAuth.authority(port)}/api/events.mux").toURL()
             conn = url.openConnection() as HttpURLConnection
             conn.connectTimeout = 3000
             conn.readTimeout = 0
@@ -327,7 +327,7 @@ class DshEditorSync(
             // 新版 dsh (0.1.2+) 握手需带浏览器认证 cookie, 否则 401 拒绝
             authCookie()?.let { builder.header("Cookie", it) }
             val w = builder
-                .buildAsync(URI("ws://127.0.0.1:$port/api/events.mux"), listener)
+                .buildAsync(URI("ws://${DshWebAuth.authority(port)}/api/events.mux"), listener)
                 .get(4, TimeUnit.SECONDS)
             if (!running.get()) {
                 w.abort()
