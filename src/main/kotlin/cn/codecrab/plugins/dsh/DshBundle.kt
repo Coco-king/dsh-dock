@@ -13,7 +13,7 @@ private const val BUNDLE = "messages.DshBundle"
  * 采用官方推荐写法: 持有 [DynamicBundle] 实例并委托取消息, 而不是继承 DynamicBundle ——
  * 供子类使用的 `DynamicBundle(String)` 构造器已被标记废弃并计划移除 (插件市场校验会报
  * "Deprecated constructor usage"), 而实例方式与其语义完全一致: 仍按 IDE 当前语言解析
- * 翻译文件, 且在所有受支持版本 (2023.1+) 上均可用。
+ * 翻译文件, 且在所有受支持版本 (2024.2+) 上均可用。
  */
 object DshBundle {
 

@@ -116,8 +116,7 @@ object DshWebUiFileOpen {
      */
     fun createChannel(browser: JBCefBrowser, project: Project, onLog: (String) -> Unit): Channel? = try {
         // 使用非废弃的 create(JBCefBrowserBase): JBCefBrowser 是该基类的子类, 显式转型以避开
-        // 已标"计划移除"的旧重载 (Marketplace 校验告警); 旧重载在 2023.1 上同样可用,
-        // 若未来最低版本提升可去掉转型
+        // 已标"计划移除"的旧重载 (Marketplace 校验告警)
         val query = JBCefJSQuery.create(browser as JBCefBrowserBase)
         val channel = Channel(query, project, onLog)
         query.addHandler { path -> channel.handle(path) }

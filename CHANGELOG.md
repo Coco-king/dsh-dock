@@ -1,5 +1,15 @@
 # Changelog / 变更日志
 
+## [1.2.1.rc] - 2026-09-19
+
+### 中文 (Chinese)
+
+- **变更（Changed）**：最低支持版本提升到 IntelliJ IDEA 2024.2（242）——2023.x / 2024.1 的内嵌浏览器内核过旧，跑不动 dsh 界面，插件侧无法修复
+
+### English
+
+- **Changed**: Minimum supported version raised to IntelliJ IDEA 2024.2 (242) — older IDEs (2023.x / 2024.1) ship an embedded browser engine too old to run the dsh UI, which the plugin cannot fix
+
 ## [1.2.0] - 2026-09-11
 
 ### 中文 (Chinese)

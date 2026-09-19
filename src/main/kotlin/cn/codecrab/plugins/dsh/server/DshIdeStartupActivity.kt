@@ -25,7 +25,7 @@ import com.intellij.openapi.startup.ProjectActivity
  * - 进程生命周期与 IDE 一致: 退出清理复用 [DshServer] 的三层保障, IDE 退出时 dsh 一并停止。
  *
  * 说明: 平台已把 ProjectManagerListener.projectOpened 标记为废弃并计划移除 (官方推荐改用
- * ProjectActivity 后台活动), 本项目最低支持 2023.1, 故直接使用官方推荐的后台活动 API。
+ * ProjectActivity 后台活动), 本项目最低支持 2024.2, 故直接使用官方推荐的后台活动 API。
  */
 class DshIdeStartupActivity : ProjectActivity {
 

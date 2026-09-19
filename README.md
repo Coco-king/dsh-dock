@@ -31,7 +31,7 @@ no terminal or separate browser needed.
    editor — jumping to the line or the edited content when dsh knows it — instead of the dsh sidebar preview
 8. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
-9. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2023.1 and later
+9. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
 10. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
@@ -56,7 +56,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 7. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径时在 IDE 编辑器中打开（能定位到行号或编辑内容），
    不再使用 dsh 侧边栏预览；打不开时仍走 dsh 预览
 8. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-9. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2023.1 及之后版本
+9. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
 10. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
@@ -102,7 +102,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   能定位行号或编辑新增内容；打不开时自动回退为 dsh 侧边栏预览。默认开启，可在设置中关闭
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
-- **宽版本支持**：支持 IntelliJ IDEA 2023.1 (231) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE
+- **宽版本支持**：支持 IntelliJ IDEA 2024.2 (242) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE
 
 ## 使用
 

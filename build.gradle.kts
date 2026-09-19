@@ -14,7 +14,7 @@ group = providers.gradleProperty("pluginGroup").get()
 version = providers.gradleProperty("pluginVersion").get()
 
 // 编译使用 JDK 21, 但目标字节码保持 Java 11,
-// 以便在 2023.1 (JBR 17) 起的宽版本范围内都能加载
+// 以便在 2024.2 起的受支持版本上都能加载
 kotlin {
     jvmToolchain(21)
     compilerOptions {

@@ -7,7 +7,7 @@
 Dsh Dock 是一个 IntelliJ IDEA 插件：一键启动 DeepSeek Harness（`dsh web`），并把 WebUI 显示在工具窗口内嵌的 JCEF 浏览器中。支持 **WSL 中启动**与 **Windows 直接启动**两种方式。
 
 - 语言：Kotlin（JVM target 11，编译 JDK 21）
-- 兼容：IntelliJ IDEA 2023.1 (231) 及以上（`pluginSinceBuild = 231`，无版本上限）
+- 兼容：IntelliJ IDEA 2024.2 (242) 及以上（`pluginSinceBuild = 242`，无版本上限）；2023.x / 2024.1 因内嵌浏览器内核过旧（跑不动 dsh 界面）不再支持，见 CHANGELOG 1.2.1.rc
 - 构建：`gradlew buildPlugin`（需要 JDK 17+ 的 Gradle 运行环境；本机 JDK 路径、构建方式等个性化配置见 **AGENTS.local.md**）
 - 开源地址：GitHub <https://github.com/Coco-king/dsh-dock>（`gradle.properties` 的 `pluginRepositoryUrl`）· Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 
