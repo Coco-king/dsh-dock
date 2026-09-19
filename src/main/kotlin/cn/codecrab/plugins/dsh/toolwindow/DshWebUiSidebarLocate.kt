@@ -8,7 +8,8 @@ import com.intellij.ui.jcef.JBCefBrowser
  * dsh WebUI 左侧边栏「会话列表」的自动定位与当前工作空间高亮:
  *
  *  - **自动定位**: 打开侧边栏会话列表 (展开侧边栏 / 切回会话面板 / 页面加载完成) 时,
- *    把当前会话那一行滚动到列表可视区域 (已在可视区内则不动, 不打扰用户);
+ *    以及之后**切换工作空间/会话**时, 把当前会话那一行滚动到列表可视区域
+ *    (已在可视区内则不动, 不打扰用户);
  *  - **高亮当前工作空间分组**: 当前会话所在的工作空间分组标题行加高亮底色 + 左侧强调条,
  *    长列表下能一眼看出"我现在在哪个工作空间";
  *  - 当前会话所在分组被折叠 / 会话被"展开更多"折叠时, 先把它们展开再定位;
@@ -199,25 +200,37 @@ object DshWebUiSidebarLocate {
         |
         |  var wasOpen = false;
         |  var pending = false;
+        |  // 上一次定位到的当前会话行 / 其所在分组: 用于识别"当前会话变了" (切换了工作空间或会话),
+        |  // 这时也要重新定位 (已完整可见时 reveal 不会滚动, 不打扰用户)
+        |  var lastRow = null;
+        |  var lastSection = null;
         |
         |  function tick() {
         |    var list = sessionList();
         |    if (!list || panelActive(list)) {
         |      wasOpen = false;
         |      pending = false;
+        |      lastRow = null;
+        |      lastSection = null;
         |      mark(null);
         |      return;
         |    }
         |    if (!wasOpen) { wasOpen = true; pending = true; }
         |    var row = currentRow(list);
         |    if (row) {
-        |      if (pending) { pending = false; reveal(row); }
-        |      mark(groupSectionOf(row));
+        |      if (pending || row !== lastRow) { pending = false; reveal(row); }
+        |      lastRow = row;
+        |      lastSection = groupSectionOf(row);
+        |      mark(lastSection);
         |      return;
         |    }
-        |    // 当前会话行还没渲染出来 (数据未到 / 分组折叠): 展开后下个 tick 再定位
-        |    if (pending && expandCurrent(list)) return;
-        |    mark(currentSection(list));
+        |    lastRow = null;
+        |    // 当前会话行还没渲染出来 (数据未到 / 分组被折叠): 展开后下个 tick 再定位
+        |    var section = currentSection(list);
+        |    var switched = section !== lastSection;
+        |    lastSection = section;
+        |    if ((pending || switched) && expandCurrent(list)) return;
+        |    mark(section);
         |  }
         |
         |  var scheduled = null;

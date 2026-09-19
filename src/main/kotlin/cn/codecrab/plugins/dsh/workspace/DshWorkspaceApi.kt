@@ -63,12 +63,26 @@ object DshWorkspaceApi {
     /** 探测到的 RPC 风格 (按端口缓存; dsh 重启不换端口, 风格不变; 停止 dsh 时由 DshServer 清空) */
     private val styleCache = java.util.concurrent.ConcurrentHashMap<Int, RpcStyle>()
 
+    /**
+     * 端口最近一次 /api 调用是否被认证拒绝 (HTTP 401)。
+     *
+     * 用途: 启动令牌只在本插件启动 dsh 时才能拿到 —— 若 dsh 是上次 IDE 会话或外部启动的、
+     * 仍在运行, 插件的 /api 调用一律 401, 工作空间同步注定失败。调用方据此不再"自动刷新
+     * 页面重试"(刷新也不会成功, 只会反复闪页面), 改为打日志提示用户。
+     * 任何一次成功的调用 (2xx) 都会清掉标记。
+     */
+    private val authRejected = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
     /** 当前端口的 RPC 风格 (未探测过返回 null) */
     fun rpcStyle(port: Int): RpcStyle? = styleCache[port]
+
+    /** 该端口最近是否被认证拒绝 (401): 同步失败时据此判断"重试/刷新无用" */
+    fun authRejected(port: Int): Boolean = authRejected[port] == true
 
     /** dsh 停止时清空探测缓存 (下次启动重新探测) */
     fun invalidateStyle(port: Int) {
         styleCache.remove(port)
+        authRejected.remove(port)
     }
 
     private class RpcResult(val ok: Boolean, val value: JsonObject?)
@@ -408,6 +422,12 @@ object DshWorkspaceApi {
                 LOG.warn("dsh api $method -> HTTP 401, re-authenticated and retrying")
                 result = postOnce(port, method, body, fresh)
             }
+        }
+        // 认证状态: 401 记标记 (调用方据此放弃无谓的重试/刷新), 成功则清标记
+        if (result?.status == 401) {
+            authRejected[port] = true
+        } else if (result != null && result.status in 200..299) {
+            authRejected.remove(port)
         }
         if (result == null || result.status !in 200..299) {
             LOG.warn("dsh api $method -> HTTP ${result?.status ?: "transport error"}")

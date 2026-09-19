@@ -29,8 +29,9 @@ no terminal or separate browser needed.
    editors update to the new content immediately — no more stale code or reopening files
 7. **File paths open in the IDE**: Clicking a file path in the dsh WebUI opens it in the IDE
    editor — jumping to the line or the edited content when dsh knows it — instead of the dsh sidebar preview
-8. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar scrolls straight to the
-   current session and highlights the workspace group it belongs to, so long session lists stay navigable
+8. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar — and switching to another
+   workspace or session afterwards — scrolls straight to the current session and highlights the workspace
+   group it belongs to, so long session lists stay navigable
 9. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
 10. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
@@ -57,8 +58,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
 7. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径时在 IDE 编辑器中打开（能定位到行号或编辑内容），
    不再使用 dsh 侧边栏预览；打不开时仍走 dsh 预览
-8. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时，自动定位到当前会话，并高亮它所在的工作空间分组，
-   会话很多时也能一眼看清"我在哪个工作空间、当前会话在哪"
+8. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时（以及之后切换工作空间/会话时），自动定位到当前会话，
+   并高亮它所在的工作空间分组，会话很多时也能一眼看清"我在哪个工作空间、当前会话在哪"
 9. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
 10. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
 11. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
@@ -108,8 +109,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **点击文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径（含文件提及、「打开」按钮）时在 IDE 编辑器中打开，
   能定位行号或编辑新增内容；打不开时自动回退为 dsh 侧边栏预览。默认开启，可在设置中关闭
 - **侧边栏会话列表自动定位**：打开 dsh 左侧边栏的会话列表（展开侧边栏、切回会话面板或页面加载完成）时，
-  自动把**当前会话**滚动到可视区中间，并**高亮当前工作空间分组**（分组标题行加底色与强调条）；
-  当前会话所在分组被折叠、或会话被「展开更多」折叠时会先自动展开；已经可见时不打扰、不滚动
+  以及之后**切换工作空间/会话**时，自动把**当前会话**滚动到可视区中间，并**高亮当前工作空间分组**
+  （分组标题行加底色与强调条）；当前会话所在分组被折叠、或会话被「展开更多」折叠时会先自动展开；
+  已经可见时不打扰、不滚动
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
 - **宽版本支持**：支持 IntelliJ IDEA 2024.2 (242) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE

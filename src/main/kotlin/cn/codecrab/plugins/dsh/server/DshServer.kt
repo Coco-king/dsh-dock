@@ -3,6 +3,7 @@ package cn.codecrab.plugins.dsh.server
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.util.WslSupport
+import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import com.intellij.ide.AppLifecycleListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -179,6 +180,8 @@ object DshServer {
         }
         // 新进程会产生新的启动令牌: 清空上一进程的认证状态
         DshWebAuth.reset()
+        // 同时作废按端口缓存的 RPC 风格与"认证被拒"标记 (新进程重新探测)
+        DshWorkspaceApi.invalidateStyle(port)
         when (mode) {
             DshSettingsState.MODE_WINDOWS -> launchOnWindows(projectPath, port, extraArgs, onLog)
             else -> {

@@ -398,11 +398,12 @@ class DshToolWindowPanel(
      * 复用预热好的内嵌浏览器 ([DshWebUiWarmup]); 不可复用返回 null (由调用方释放并新建, 原因记入日志)。
      * 复用条件: 端口与当前设置一致、dsh 在运行; 页面未加载完也可先接管 (见下)。
      * 复用时把加载注入 (主题/语言/会话清除/引用暂存) 切换为本面板接管。
-     *  - 页面已加载且工作空间就是本项目: 直接显示, **不再重新同步**;
-     *  - 工作空间不是本项目 (多窗口下借用了其他窗口的预热, 或预热同步失败): 同样复用这个浏览器,
-     *    只为本项目重新同步工作空间并切回本项目页面 —— 复用省下的是 CEF 冷启动与建浏览器的大头,
-     *    切换工作空间只是一次页面加载;
-     *  - 页面尚未加载完且工作空间一致: 接管后短暂宽限等待预热加载完成, 超时才交回看门狗走"同步 -> 加载"流程。
+     *  - 工作空间确定不是本项目 (多窗口下借用了其他窗口的预热): 复用这个浏览器, 为本项目重新同步
+     *    工作空间并切回本项目页面 —— 复用省下的是 CEF 冷启动与建浏览器的大头;
+     *  - 预热时工作空间同步失败 (无法确认是不是本项目): 同样复用, 页面先按原样显示, 后台核对
+     *    工作空间, 只有确实需要切换时才刷新 (**不做无谓的整页刷新**, 避免反复闪页面);
+     *  - 页面已加载且工作空间就是本项目: 直接显示, 不重新同步;
+     *  - 页面尚未加载完且工作空间就是本项目: 接管后短暂宽限等待预热加载完成, 超时才交回看门狗。
      */
     private fun adoptWarmedBrowser(warmed: DshWebUiWarmup.Warmed?): JComponent? {
         if (warmed == null) return null
@@ -417,8 +418,11 @@ class DshToolWindowPanel(
             )
             return null
         }
-        // 预热的工作空间不是本项目 (借用其他窗口的预热 / 预热时同步失败): 复用浏览器, 接管后切回本项目
-        val workspaceMismatch = warmed.syncedDshPath != currentProjectDshPath()
+        val myDshPath = currentProjectDshPath()
+        // 预热的工作空间确定不是本项目 (借用了其他窗口的预热): 复用后必须切回本项目
+        val foreignWorkspace = warmed.syncedDshPath != null && warmed.syncedDshPath != myDshPath
+        // 预热时同步失败: 无法确认页面上的工作空间是不是本项目 (不能当成"不一致"而反复刷新)
+        val workspaceUnknown = warmed.syncedDshPath == null && myDshPath != null
         val b = warmed.browser
         val jbClient = warmed.client
         try {
@@ -443,40 +447,68 @@ class DshToolWindowPanel(
         if (!DshDisposer.register(parentDisposable, b)) {
             appendLog(DshBundle.message("log.browserDisposeWarn"))
         }
-        if (workspaceMismatch) {
-            // 复用浏览器, 但页面上的工作空间不是本项目: 立即为本项目同步并加载 (页面未加载完时同样处理,
-            // 在途的预热加载会被这次加载取代 —— 但 CEF 冷启动与浏览器创建已经省下)
-            webUiLoaded = true
-            pageLoaded = false
-            appendLog(DshBundle.message("log.warmup.adoptedSwitch"))
-            SwingUtilities.invokeLater {
-                if (!project.isDisposed) loadWebUi()
-            }
-        } else if (warmed.pageLoaded) {
-            // 页面已就绪且就是本项目: 直接显示, 不重新同步 (预热时已同步过本项目工作空间)
-            webUiLoaded = true
-            pageLoaded = true
-            appendLog(DshBundle.message("log.warmup.adopted"))
-            // 预热页面不会再触发 onLoadEnd, 这里补注入一次页面脚本 (点击拦截 / 会话列表定位)
-            installPageScripts()
-        } else {
-            // 页面尚未加载完 (工作空间一致): 先接管并短暂宽限等待其加载完成 (onLoadEnd 置位 pageLoaded);
-            // 超时未完成则放行 (webUiLoaded=false), 由看门狗走"同步 -> 加载"流程
-            webUiLoaded = true
-            pageLoaded = false
-            appendLog(DshBundle.message("log.warmup.adoptedLoading"))
-            val grace = javax.swing.Timer(4000, null)
-            grace.addActionListener {
-                grace.stop()
-                if (project.isDisposed) return@addActionListener
-                if (!pageLoaded) {
-                    webUiLoaded = false // 预热页未如期加载完: 交回看门狗重新同步加载
+        when {
+            foreignWorkspace -> {
+                // 复用浏览器, 但页面上的工作空间不是本项目: 立即为本项目同步并加载 (页面未加载完时
+                // 同样处理, 在途的预热加载会被这次加载取代 —— 但 CEF 冷启动与浏览器创建已经省下)
+                webUiLoaded = true
+                pageLoaded = false
+                appendLog(DshBundle.message("log.warmup.adoptedSwitch"))
+                SwingUtilities.invokeLater {
+                    if (!project.isDisposed) loadWebUi()
                 }
             }
-            grace.isRepeats = false
-            grace.start()
+            workspaceUnknown -> {
+                // 预热同步失败 (如 dsh 认证不可用): 页面先按原样显示, 后台核对工作空间,
+                // 不整页刷新 (见 [loadWebUi] 的 reloadOnlyWhenBumped)
+                webUiLoaded = true
+                pageLoaded = warmed.pageLoaded
+                appendLog(DshBundle.message("log.warmup.adoptedUnconfirmed"))
+                if (warmed.pageLoaded) {
+                    installPageScripts()
+                } else {
+                    // 页面还在加载: 宽限等待其加载完成, 超时交回看门狗
+                    graceWaitForWarmPage()
+                }
+                SwingUtilities.invokeLater {
+                    if (!project.isDisposed) loadWebUi(reloadOnlyWhenBumped = true)
+                }
+            }
+            warmed.pageLoaded -> {
+                // 页面已就绪且就是本项目: 直接显示, 不重新同步 (预热时已同步过本项目工作空间)
+                webUiLoaded = true
+                pageLoaded = true
+                appendLog(DshBundle.message("log.warmup.adopted"))
+                // 预热页面不会再触发 onLoadEnd, 这里补注入一次页面脚本 (点击拦截 / 会话列表定位)
+                installPageScripts()
+            }
+            else -> {
+                // 页面尚未加载完 (工作空间一致): 先接管并短暂宽限等待其加载完成 (onLoadEnd 置位 pageLoaded);
+                // 超时未完成则放行 (webUiLoaded=false), 由看门狗走"同步 -> 加载"流程
+                webUiLoaded = true
+                pageLoaded = false
+                appendLog(DshBundle.message("log.warmup.adoptedLoading"))
+                graceWaitForWarmPage()
+            }
         }
         return browserComponent(b)
+    }
+
+    /**
+     * 预热页面尚未加载完时接管: 宽限等待其加载完成 (onLoadEnd 置位 [pageLoaded]);
+     * 超时未完成则放行 (webUiLoaded=false), 由看门狗走"同步 -> 加载"流程。
+     */
+    private fun graceWaitForWarmPage() {
+        val grace = javax.swing.Timer(4000, null)
+        grace.addActionListener {
+            grace.stop()
+            if (project.isDisposed) return@addActionListener
+            if (!pageLoaded) {
+                webUiLoaded = false // 预热页未如期加载完: 交回看门狗重新同步加载
+            }
+        }
+        grace.isRepeats = false
+        grace.start()
     }
 
     /**
@@ -743,8 +775,12 @@ class DshToolWindowPanel(
      * 地址说明: 新版 dsh (0.1.2+) 的 WebUI 首页需带启动令牌访问 (换取认证 cookie),
      * 页面加载优先用带令牌的地址 (令牌随 dsh 进程输出打印, 插件自动捕获);
      * 令牌未捕获 (如外部启动的 dsh) 时退回普通地址, 页面会停在 dsh 的认证提示页。
+     *
+     * @param reloadOnlyWhenBumped 只核对工作空间, 不做无谓的整页刷新: 同步成功且确认
+     *   "工作空间本就是这个项目"时页面保持原样 (用于接管预热页面时预热同步未确认的场景,
+     *   见 [adoptWarmedBrowser]); 确实需要切换工作空间 (bumped) 时才刷新页面。
      */
-    private fun loadWebUi(loadFirst: Boolean = false) {
+    private fun loadWebUi(loadFirst: Boolean = false, reloadOnlyWhenBumped: Boolean = false) {
         val port = settings.currentPort()
         val projectPath = project.basePath
         if (projectPath == null) {
@@ -800,7 +836,15 @@ class DshToolWindowPanel(
                     // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)
                     lastSyncedPath = dshPath
                 } else {
-                    appendLog(DshBundle.message("log.workspaceSyncUnavailable"))
+                    appendLog(
+                        DshBundle.message(
+                            if (DshWorkspaceApi.authRejected(port)) {
+                                "log.workspaceSyncAuthUnavailable"
+                            } else {
+                                "log.workspaceSyncUnavailable"
+                            }
+                        )
+                    )
                     // 页面加载完成后自动刷新一次重试 (见 [autoReloadAfterSyncFailure])
                     workspaceSyncFailed = true
                 }
@@ -825,6 +869,13 @@ class DshToolWindowPanel(
                                 )
                             )
                             browser?.loadURL(url)
+                        }
+                        // 仅核对模式: 工作空间本就是这个项目 -> 页面保持原样; 确实切了才刷新
+                        reloadOnlyWhenBumped -> {
+                            if (r != null && r.bumped) {
+                                appendLog(DshBundle.message("log.workspaceSwitchedReload"))
+                                browser?.loadURL(url)
+                            }
                         }
                         // 同步前已加载且工作空间无需切换: 页面已正确, 无需再刷
                         !loadFirst -> {
@@ -887,6 +938,12 @@ class DshToolWindowPanel(
         if (activationResynced) return
         activationResynced = true
         if (lastSyncedPath == currentProjectDshPath()) return
+        // 认证不可用 (dsh 由上次 IDE 会话/外部启动, 插件没有启动令牌): 同步必然失败,
+        // 不能每次切回窗口都刷一次页面 —— 只提示一次, 页面保持原样
+        if (DshWorkspaceApi.authRejected(settings.currentPort())) {
+            appendLog(DshBundle.message("log.resyncAuthUnavailable"))
+            return
+        }
         appendLog(DshBundle.message("log.activationResync"))
         loadWebUi()
     }
@@ -896,11 +953,16 @@ class DshToolWindowPanel(
      * 但工作空间没有切到当前项目, 用户手动刷新即可恢复)。
      * 这里在页面加载完成后自动刷新一次重新同步 —— 与手动刷新等效;
      * 每个失败周期最多自动刷新一次 (由 [syncAutoReloaded] 保证), 避免循环。
+     * 认证不可用 (401) 时重试与刷新都不可能成功, 直接跳过并提示 (否则会反复闪页面)。
      */
     private fun autoReloadAfterSyncFailure() {
         if (!workspaceSyncFailed || syncAutoReloaded) return
         syncAutoReloaded = true
         workspaceSyncFailed = false
+        if (DshWorkspaceApi.authRejected(settings.currentPort())) {
+            appendLog(DshBundle.message("log.authUnavailableNoRetry"))
+            return
+        }
         SwingUtilities.invokeLater {
             if (project.isDisposed) return@invokeLater
             val timer = javax.swing.Timer(1200, null)
