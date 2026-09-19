@@ -49,6 +49,14 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
      *  (关闭则沿用 dsh 自带的侧边栏预览) */
     var openFileInIde: Boolean = true
 
+    /**
+     * 打开 Dsh Dock 时恢复上次打开的会话。
+     *
+     * 默认关闭: 每次打开都停在**当前项目的一个空白新会话**上 (不复用上次的对话, 需要继续
+     * 上次的对话时从侧边栏点开)。打开该选项则恢复上次会话 (dsh 的默认行为)。
+     */
+    var restoreLastSession: Boolean = false
+
     /** dsh WebUI 语言: "" = 跟随浏览器/IDE; "zh-CN" = 中文; "en" = English */
     var forceLocale: String = ""
 
@@ -78,6 +86,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
         syncEditedFiles = state.syncEditedFiles
         themeFollowIde = state.themeFollowIde
         openFileInIde = state.openFileInIde
+        restoreLastSession = state.restoreLastSession
         forceLocale = state.forceLocale
     }
 

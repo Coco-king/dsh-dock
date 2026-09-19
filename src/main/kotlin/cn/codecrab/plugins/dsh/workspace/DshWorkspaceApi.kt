@@ -150,8 +150,15 @@ object DshWorkspaceApi {
      * 重试或在页面加载后自动重试, 绝不把「无法确认」静默当作成功 —— 否则页面落在上一个项目,
      * 正是"重启 IDE 后工作空间没切到当前项目"的高发根因 (判定链路恰好赶上 dsh /api 未就绪窗口时)。
      * @param timeoutMs 整个同步过程的软超时 (避免 dsh API 异常时拖慢页面加载)
+     * @param restoreLastSession 打开时恢复上次会话 (设置项, 默认关闭): 关闭时落地会话固定取
+     *   **空白会话** (没有就现建一个), 页面因此停在当前项目的空白新会话上, 不复用上次的对话
      */
-    fun ensureProjectWorkspace(port: Int, projectDshPath: String?, timeoutMs: Long = 8000): WorkspaceSyncResult? {
+    fun ensureProjectWorkspace(
+        port: Int,
+        projectDshPath: String?,
+        timeoutMs: Long = 8000,
+        restoreLastSession: Boolean = true,
+    ): WorkspaceSyncResult? {
         if (projectDshPath.isNullOrBlank()) return null
         val deadline = System.currentTimeMillis() + timeoutMs
         val create = rpcWithin(
@@ -204,14 +211,19 @@ object DshWorkspaceApi {
         // 落地会话 (页面加载后应当打开的会话): 优先最近的非空白会话; 没有非空白会话时用空白会话
         // (本次 bump 出来的, 或工作空间里已有的); 一个会话都没有就现建一个
         val nonBlankLanding = pickLandingSession(sessionItems, sessionIds)
-        val landing = nonBlankLanding
-            ?: bumpSessionId
-            ?: pickBlankSession(sessionItems, sessionIds)
-        // 空白会话卫生: 只在"工作空间已有非空白会话"时清理空白会话 (复用上面 session.list 的结果)。
-        // 没有非空白会话时**不清理**: 那些空白会话正是页面落点, 而 dsh 客户端会把"当前会话已归档"的
-        // 选择清掉、退回按全局"最近工作空间"选 —— 落点失效就会落到别的项目上 (多窗口互串的根因之一);
-        // 也无法从 API 分辨哪一枚空白会话是当前会话, 清理有把当前会话归档掉的风险。
-        if (nonBlankLanding != null) {
+        val existingBlank = pickBlankSession(sessionItems, sessionIds)
+        // 落地会话: 恢复上次会话时取最近的非空白会话 (没有就用空白会话); 不恢复时固定用空白会话,
+        // 页面就停在当前项目的空白新会话上 (复用已有空白, 用过的那枚已变成非空白 -> 下次现建一枚新的)
+        val landing = if (restoreLastSession) {
+            nonBlankLanding ?: bumpSessionId ?: existingBlank
+        } else {
+            existingBlank ?: bumpSessionId
+        }
+        // 空白会话卫生: 只在"落地会话是非空白会话"时清理空白会话 (复用上面 session.list 的结果)。
+        // 落地会话本身是空白会话时**不清理**: 它 (以及其它空白) 可能正是页面当前的落点, 而 dsh
+        // 客户端会把"当前会话已归档"的选择清掉、退回按全局"最近工作空间"选 —— 落点失效就会落到
+        // 别的项目上 (多窗口互串的根因之一); 也无法从 API 分辨哪一枚空白会话是当前会话。
+        if (restoreLastSession && nonBlankLanding != null && landing == nonBlankLanding) {
             archiveBlankSessions(port, sessionIds, sessionItems, deadline)
         }
         val finalLanding = landing ?: createLandingSession(port, workspaceId, deadline)

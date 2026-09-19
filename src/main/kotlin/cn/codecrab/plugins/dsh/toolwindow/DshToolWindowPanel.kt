@@ -578,7 +578,13 @@ class DshToolWindowPanel(
         val b = browser ?: return
         fileOpenChannel?.install(b, project)
         DshWebUiSidebarLocate.install(
-            b, syncLandingSessionId, syncSessionIds, syncWorkspaceId, syncHasContentSession, ::appendLog,
+            b,
+            syncLandingSessionId,
+            syncSessionIds,
+            syncWorkspaceId,
+            syncHasContentSession,
+            newSessionMode = !settings.restoreLastSession,
+            onLog = ::appendLog,
         )
         DshJcefCookies.adoptAuthCookieAsync(settings.currentPort()) {
             appendLog(DshBundle.message("log.authCookieAdopted"))
@@ -857,7 +863,9 @@ class DshToolWindowPanel(
                 var result: DshWorkspaceApi.WorkspaceSyncResult? = null
                 val deadline = System.currentTimeMillis() + 8000
                 while (result == null && System.currentTimeMillis() < deadline) {
-                    result = DshWorkspaceApi.ensureProjectWorkspace(port, dshPath)
+                    result = DshWorkspaceApi.ensureProjectWorkspace(
+                        port, dshPath, restoreLastSession = settings.restoreLastSession,
+                    )
                     if (result == null && System.currentTimeMillis() < deadline) {
                         try {
                             Thread.sleep(700)

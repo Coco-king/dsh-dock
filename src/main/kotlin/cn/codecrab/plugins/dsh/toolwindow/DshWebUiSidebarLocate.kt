@@ -41,6 +41,8 @@ object DshWebUiSidebarLocate {
      *   本项目的分组并点"新建会话"切过去
      * @param hasContentSession 本项目工作空间里是否有非空白会话: 有真实会话时不允许点"新建会话"
      *   (那只用于项目还没有任何会话的场景, 免得误开新会话)
+     * @param newSessionMode 设置项「打开时恢复上次会话」关闭 (默认) 时为 true: 页面必须停在
+     *   **空白新会话**上, 落地纠正不会去点开本项目的真实会话 (那是"恢复上次会话"才做的事)
      */
     fun install(
         browser: JBCefBrowser,
@@ -48,11 +50,12 @@ object DshWebUiSidebarLocate {
         workspaceSessionIds: List<String>?,
         workspaceId: String?,
         hasContentSession: Boolean,
+        newSessionMode: Boolean,
         onLog: (String) -> Unit,
     ) {
         try {
             browser.cefBrowser.executeJavaScript(
-                locateScript(landingSessionId, workspaceSessionIds, workspaceId, hasContentSession),
+                locateScript(landingSessionId, workspaceSessionIds, workspaceId, hasContentSession, newSessionMode),
                 "dsh://ide-sidebar-locate.js",
                 0,
             )
@@ -69,10 +72,12 @@ object DshWebUiSidebarLocate {
         workspaceSessionIds: List<String>?,
         workspaceId: String?,
         hasContentSession: Boolean,
+        newSessionMode: Boolean,
     ): String {
         val landingJs = if (landingSessionId.isNullOrBlank()) "null" else DshWebUiInject.jsString(landingSessionId)
         val workspaceJs = if (workspaceId.isNullOrBlank()) "null" else DshWebUiInject.jsString(workspaceId)
         val hasContentJs = if (hasContentSession) "true" else "false"
+        val newSessionJs = if (newSessionMode) "true" else "false"
         val idsJs = (workspaceSessionIds ?: emptyList())
             .joinToString(prefix = "[", postfix = "]", separator = ",") { DshWebUiInject.jsString(it) }
         return """
@@ -89,6 +94,8 @@ object DshWebUiSidebarLocate {
         |  var IDS = $idsJs;
         |  var WORKSPACE_ID = $workspaceJs;
         |  var HAS_CONTENT = $hasContentJs;
+        |  // 设置项「打开时恢复上次会话」关闭 (默认): 页面要停在空白新会话上, 不点开真实对话
+        |  var NEW_SESSION_MODE = $newSessionJs;
         |  var LANDING_MIN_WAIT_MS = 1500;
         |  var LANDING_GIVE_UP_MS = 8000;
         |  var RELOAD_GUARD_KEY = "dsh.ide.landingReloadAt";
@@ -285,22 +292,37 @@ object DshWebUiSidebarLocate {
         |    return changed;
         |  }
         |
+        |  // 当前会话是否就是"空白新会话" (会话行上的 node.blank; 或正是我们准备的那一枚落地会话)
+        |  function currentIsNewSession(list, cur) {
+        |    if (cur === null) return false;
+        |    if (LANDING !== null && cur === LANDING) return true;
+        |    var row = list ? rowOfSession(list, cur) : null;
+        |    var node = row ? propOf(row, "node") : null;
+        |    return !!(node && node.blank === true);
+        |  }
+        |
         |  function ensureLanding(list) {
         |    if (landingDone || userTouched) return;
         |    // 页面刚加载完的一小段内先观察, 避免读到"还没切过去"的中间状态
         |    if (Date.now() - landingStartedAt < LANDING_MIN_WAIT_MS) return;
         |    var cur = pageCurrentSessionId(list);
-        |    if (cur !== null && IDS.indexOf(cur) !== -1) { landingDone = true; return; }
-        |    // 1) 本项目的会话行已渲染: 直接点开 (无刷新切回; 落地会话优先, 其次本项目任意会话)
+        |    if (NEW_SESSION_MODE) {
+        |      // 不恢复上次会话: 页面停在空白新会话上就算达成 (不要求正是我们准备的那一枚空白会话)
+        |      if (cur !== null && currentIsNewSession(list, cur)) { landingDone = true; return; }
+        |    } else if (cur !== null && IDS.indexOf(cur) !== -1) {
+        |      landingDone = true;
+        |      return;
+        |    }
+        |    // 1) 本项目的会话行已渲染: 直接点开 (恢复上次会话时; 新会话模式下不点开真实对话)
         |    var row = LANDING === null ? null : rowOfSession(list, LANDING);
-        |    if (!row && list) row = rowOfAnyOurSession(list);
+        |    if (!row && !NEW_SESSION_MODE && list) row = rowOfAnyOurSession(list);
         |    if (row) { landingDone = true; row.click(); return; }
         |    // 2) 本项目的分组还在: 先把折叠的分组/会话展开 (下个 tick 就能点开正确的会话)
         |    var section = ourGroupSection(list);
         |    if (expandOurGroup(section)) return;
-        |    // 3) 分组已展开但组内一个会话行都没有 (项目还没有任何会话): 点"新建会话"切过去 (无需刷新)
-        |    //    有真实会话的项目不走这条路, 免得误开新会话
-        |    if (section && !HAS_CONTENT) {
+        |    // 3) 点"新建会话": 新会话模式下这是切回本项目的方式 (会复用/新建空白会话);
+        |    //    恢复模式下只在项目还没有任何真实会话时这么做, 免得误开新会话
+        |    if (section && (NEW_SESSION_MODE || !HAS_CONTENT)) {
         |      var btn = newSessionButtonOfOurGroup(list);
         |      if (btn) { landingDone = true; btn.click(); return; }
         |    }

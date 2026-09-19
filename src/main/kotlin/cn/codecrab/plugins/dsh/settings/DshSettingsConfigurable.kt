@@ -12,6 +12,7 @@ import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
+import javax.swing.AbstractButton
 import javax.swing.ButtonGroup
 import javax.swing.JCheckBox
 import javax.swing.JComponent
@@ -37,6 +38,7 @@ class DshSettingsConfigurable : Configurable {
     private var openExternalField: JCheckBox? = null
     private var syncEditedFilesField: JCheckBox? = null
     private var openFileInIdeField: JCheckBox? = null
+    private var restoreLastSessionField: JCheckBox? = null
     private var themeFollowField: JCheckBox? = null
     private var launchWslField: JRadioButton? = null
     private var launchWindowsField: JRadioButton? = null
@@ -80,6 +82,7 @@ class DshSettingsConfigurable : Configurable {
         themeFollowField = JCheckBox(DshBundle.message("settings.themeFollow"))
         syncEditedFilesField = JCheckBox(DshBundle.message("settings.syncEditedFiles", ideName))
         openFileInIdeField = JCheckBox(DshBundle.message("settings.openFileInIde"))
+        restoreLastSessionField = JCheckBox(DshBundle.message("settings.restoreLastSession"))
 
         launchWslField = JRadioButton(DshBundle.message("settings.mode.wsl"))
         launchWindowsField = JRadioButton(DshBundle.message("settings.mode.windows"))
@@ -112,6 +115,10 @@ class DshSettingsConfigurable : Configurable {
         y = fullWidth(y, themeFollowField!!)
         y = fullWidth(y, syncEditedFilesField!!)
         y = fullWidth(y, openFileInIdeField!!)
+        y = fullWidth(
+            y,
+            buttonWithHelp(restoreLastSessionField!!, DshBundle.message("settings.restoreLastSession.tooltip")),
+        )
         y = fullWidth(y, TitledSeparator(DshBundle.message("settings.modeSeparator")))
         y = fullWidth(y, modePanel(launchWslField!!, wslPortField!!, wslExtraArgsField!!))
         y = fullWidth(y, modePanel(launchWindowsField!!, windowsPortField!!, windowsExtraArgsField!!))
@@ -137,16 +144,16 @@ class DshSettingsConfigurable : Configurable {
     private fun startModePanel(): JComponent = JPanel(FlowLayout(FlowLayout.LEFT, 12, 0)).apply {
         isOpaque = false
         add(JLabel(DshBundle.message("settings.autoStartMode.label")))
-        add(radioWithHelp(startIdeField!!, DshBundle.message("settings.autoStartMode.tooltip.ideStartup")))
-        add(radioWithHelp(startToolWindowField!!, DshBundle.message("settings.autoStartMode.tooltip.toolWindow")))
-        add(radioWithHelp(startManualField!!, DshBundle.message("settings.autoStartMode.tooltip.manual")))
+        add(buttonWithHelp(startIdeField!!, DshBundle.message("settings.autoStartMode.tooltip.ideStartup")))
+        add(buttonWithHelp(startToolWindowField!!, DshBundle.message("settings.autoStartMode.tooltip.toolWindow")))
+        add(buttonWithHelp(startManualField!!, DshBundle.message("settings.autoStartMode.tooltip.manual")))
     }
 
-    /** 单选按钮 + 问号帮助图标 (悬浮提示该选项的含义) */
-    private fun radioWithHelp(radio: JRadioButton, tooltip: String): JComponent =
+    /** 按钮 (单选/复选) + 问号帮助图标 (悬浮提示该选项的含义) */
+    private fun buttonWithHelp(button: AbstractButton, tooltip: String): JComponent =
         JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply {
             isOpaque = false
-            add(radio)
+            add(button)
             add(JBLabel(AllIcons.General.ContextHelp).apply { toolTipText = tooltip })
         }
 
@@ -185,6 +192,7 @@ class DshSettingsConfigurable : Configurable {
             openExternalField?.isSelected != s.openExternalBrowser ||
             syncEditedFilesField?.isSelected != s.syncEditedFiles ||
             openFileInIdeField?.isSelected != s.openFileInIde ||
+            restoreLastSessionField?.isSelected != s.restoreLastSession ||
             themeFollowField?.isSelected != s.themeFollowIde ||
             wslPortField?.text?.toIntOrNull() != s.wslPort ||
             wslExtraArgsField?.text?.trim() != s.wslExtraDshArgs ||
@@ -200,6 +208,7 @@ class DshSettingsConfigurable : Configurable {
         s.openExternalBrowser = openExternalField?.isSelected ?: s.openExternalBrowser
         s.syncEditedFiles = syncEditedFilesField?.isSelected ?: s.syncEditedFiles
         s.openFileInIde = openFileInIdeField?.isSelected ?: s.openFileInIde
+        s.restoreLastSession = restoreLastSessionField?.isSelected ?: s.restoreLastSession
         s.themeFollowIde = themeFollowField?.isSelected ?: s.themeFollowIde
         s.wslPort = wslPortField?.text?.toIntOrNull() ?: s.wslPort
         s.windowsPort = windowsPortField?.text?.toIntOrNull() ?: s.windowsPort
@@ -226,6 +235,7 @@ class DshSettingsConfigurable : Configurable {
         openExternalField?.isSelected = s.openExternalBrowser
         syncEditedFilesField?.isSelected = s.syncEditedFiles
         openFileInIdeField?.isSelected = s.openFileInIde
+        restoreLastSessionField?.isSelected = s.restoreLastSession
         themeFollowField?.isSelected = s.themeFollowIde
         wslPortField?.text = s.wslPort.toString()
         wslExtraArgsField?.text = s.wslExtraDshArgs
@@ -260,6 +270,7 @@ class DshSettingsConfigurable : Configurable {
         openExternalField = null
         syncEditedFilesField = null
         openFileInIdeField = null
+        restoreLastSessionField = null
         themeFollowField = null
         launchWslField = null
         launchWindowsField = null

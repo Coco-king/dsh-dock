@@ -23,7 +23,8 @@ no terminal or separate browser needed.
    show the auth prompt — start (or restart) dsh from the plugin in that case
 4. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
    with multiple open windows it follows the **active window**, and every window's page is pinned to its own
-   project, so windows sharing one dsh never leak workspaces into each other
+   project, so windows sharing one dsh never leak workspaces into each other; by default each open starts a
+   blank new session instead of the previous conversation (a setting restores the last session)
 5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
    reference with one click, so the assistant can read the file when needed
 6. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
@@ -56,7 +57,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    语言与文件同步都照常工作；只有浏览器里也没有可用 cookie 时页面才会停在认证提示页，
    这种情况请通过插件启动（或重启）dsh
 4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
-   且每个窗口的页面都固定在自己的项目上，多个窗口共用一个 dsh 也不会互相串工作空间
+   且每个窗口的页面都固定在自己的项目上，多个窗口共用一个 dsh 也不会互相串工作空间；
+   默认每次打开都停在当前项目的空白新会话（可在设置中改为恢复上次会话）
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
 6. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
@@ -116,6 +118,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   通知的老问题也一并解决）；有未保存修改的文件不会被覆盖；默认开启，可在设置中关闭
 - **点击文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径（含文件提及、「打开」按钮）时在 IDE 编辑器中打开，
   能定位行号或编辑新增内容；打不开时自动回退为 dsh 侧边栏预览。默认开启，可在设置中关闭
+- **打开即空白新会话（默认）**：每次打开 Dsh Dock 都停在当前项目的一个空白新会话上，不复用上次的对话；
+  需要"打开就恢复上次会话"时，在设置里打开「打开时恢复上次会话」即可（历史会话始终可以从侧边栏点开）
 - **侧边栏会话列表自动定位**：打开 dsh 左侧边栏的会话列表（展开侧边栏、切回会话面板或页面加载完成）时，
   以及之后**切换工作空间/会话**时，自动把**当前会话**滚动到可视区中间，并**高亮当前工作空间分组**
   （分组标题行加底色与强调条）；当前会话所在分组被折叠、或会话被「展开更多」折叠时会先自动展开；
@@ -184,6 +188,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
 | 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（实时监听 dsh 会话事件，写入成功即刷新） | 开启 |
 | 点击文件路径在 IDE 中打开 | 点击 WebUI 里的文件路径时在 IDE 编辑器中打开该文件 | 开启 |
+| 打开时恢复上次会话 | 关闭：每次打开 Dsh Dock 都停在当前项目的一个**空白新会话**上，不复用上次的对话（历史会话仍可从侧边栏点开）；打开：恢复上次打开的会话（dsh 默认行为） | 关闭 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
 | WebUI 语言 | 单选：跟随 IDE 语言 / 简体中文 / English（跟随模式下按 IDE 界面语言自动同步 dsh 语言偏好，如英文 IDE → 英文 WebUI） | 跟随 |
 

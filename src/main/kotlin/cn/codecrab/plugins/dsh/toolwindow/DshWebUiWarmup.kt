@@ -291,7 +291,9 @@ object DshWebUiWarmup {
                     var result: DshWorkspaceApi.WorkspaceSyncResult? = null
                     val syncDeadline = System.currentTimeMillis() + 8000
                     while (result == null && System.currentTimeMillis() < syncDeadline) {
-                        result = DshWorkspaceApi.ensureProjectWorkspace(port, dshPath)
+                        result = DshWorkspaceApi.ensureProjectWorkspace(
+                            port, dshPath, restoreLastSession = settings.restoreLastSession,
+                        )
                         if (result == null && System.currentTimeMillis() < syncDeadline) {
                             try {
                                 Thread.sleep(700)

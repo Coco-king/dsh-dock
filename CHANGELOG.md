@@ -6,6 +6,7 @@
 
 - **新增（Added）**：打开 dsh 左侧边栏的会话列表时（以及之后切换工作空间/会话时），自动定位到当前会话，并高亮它所在的工作空间分组（分组被折叠、或会话被「展开更多」折叠时会先自动展开）
 - **修复（Fixed）**：多个 IDE 窗口同时打开时工作空间会互相串（本窗口的页面显示成别的项目的工作空间，项目还没有会话时尤其明显）——现在每个窗口的页面都固定在自己的项目上：加载时直接打开本项目的会话（项目还没有会话就自动准备一个），加载后若发现落在别的项目上会自动切回；多窗口同时预热时也不再互相抢占
+- **变更（Changed）**：默认改为**每次打开 Dsh Dock 都停在当前项目的一个空白新会话**（不再自动恢复上次的对话，历史会话仍可从侧边栏点开）——需要「打开即恢复上次会话」的用户可在设置里打开同名选项
 - **变更（Changed）**：最低支持版本提升到 IntelliJ IDEA 2024.2（242）——2023.x / 2024.1 的内嵌浏览器内核过旧，跑不动 dsh 界面，插件侧无法修复
 - **修复（Fixed）**：多窗口（多项目）下非首个窗口首次打开 Dsh Dock 仍要等浏览器冷启动——现在每个窗口都会在后台各自预热，任何窗口首次打开都几乎瞬时显示；复用到其他项目的预热页面时（工作空间不是当前项目）会自动切换到当前项目
 - **修复（Fixed）**：dsh 由上次 IDE 会话或外部方式启动时（插件拿不到启动令牌），工作空间跟随、语言同步与文件同步会一直失效，打开面板还会反复刷新页面——现在插件会从内嵌浏览器借用已有的认证 cookie，这些功能恢复正常；确实借不到时最多加载一次页面，日志说明原因并提示重启 dsh，不再反复闪页面
@@ -14,6 +15,7 @@
 
 - **Added**: Opening the session list in the dsh sidebar — and switching to another workspace or session afterwards — locates the current session and highlights the workspace group it belongs to (a collapsed group or sessions hidden behind "show more" are expanded first)
 - **Fixed**: With several IDE windows open at once the workspace could leak across windows (a window's page showing another project, most visibly for projects that have no session yet) — every window's page is now pinned to its own project: it opens that project's session on load (preparing one when the project has none), switches back automatically if it landed elsewhere, and simultaneous warm-ups no longer fight over the shared workspace
+- **Changed**: Dsh Dock now opens a **blank new session in the current project** by default instead of restoring the previous conversation (earlier sessions remain available in the sidebar); turning on the new "Restore the last session when opening" setting brings back the old behaviour
 - **Changed**: Minimum supported version raised to IntelliJ IDEA 2024.2 (242) — older IDEs (2023.x / 2024.1) ship an embedded browser engine too old to run the dsh UI, which the plugin cannot fix
 - **Fixed**: With multiple windows (projects) only the first one enjoyed warm-up, so opening Dsh Dock in any other window still waited for a cold browser start — every window now warms up in the background, making the first open instant everywhere; a warm-up page belonging to another project's workspace is switched to the current project after reuse
 - **Fixed**: When dsh was started by an earlier IDE session or externally (so the plugin has no launch token), workspace following, language sync and file sync stayed broken while opening the panel flashed the page over and over — the plugin now adopts the auth cookie the embedded browser already holds, restoring those features; if no cookie can be borrowed it loads the page at most once, explains the reason and suggests restarting dsh
