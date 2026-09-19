@@ -20,6 +20,7 @@ import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.network.CefRequest
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
 import javax.swing.SwingUtilities
 
 /**
@@ -31,13 +32,22 @@ import javax.swing.SwingUtilities
  * 首次打开还要付出 JCEF/CEF 冷启动 (加载 native 库、拉起浏览器子进程) 与
  * 页面加载两段等待 —— 预热把这两段也提前到 IDE 启动时完成。
  *
- * 复用与降级 (面板创建时调 [take]):
- *  - 预热完成 (页面已加载) 且端口一致、dsh 在运行 -> 面板直接复用浏览器与已加载页面,
- *    加载注入 (主题/语言/会话清除) 由面板接管;
- *  - 预热页面的工作空间与面板项目不一致 -> 面板复用后立即为本项目重新同步并刷新;
+ * **按窗口预热**: 一个 JCEF 浏览器只能挂在一个窗口里, 多项目窗口下每个窗口都
+ * 需要自己的浏览器, 因此预热以**项目**为单位各做一份 (每个项目一次): 哪个窗口
+ * 首次打开工具窗口都能直接复用, 不必现场冷启动 CEF。
+ *
+ * 复用与降级 (面板创建时调 [takeOwn] / [takeForeign]):
+ *  - 优先取本项目自己的预热结果 (工作空间就是本项目, 接管即用, 无需重新加载);
+ *  - 本项目没有可用结果时**借用其他项目的预热浏览器** —— 预热的工作空间与当前项目
+ *    不一致也没关系, 面板接管后重新同步并切回本项目 ([DshToolWindowPanel.loadWebUi]);
  *  - 页面尚未加载完 / 端口已变 / dsh 不在运行 -> 面板释放预热浏览器按原流程创建
  *    (此时 CEF 已由预热启动, 创建成本也已大幅降低);
- *  - 本会话只预热一次; 面板已存在 (如工具窗口随项目自动恢复) 时不再预热。
+ *  - 面板已存在 (如工具窗口随项目自动恢复) 的项目不再预热 (页面由面板自己管理)。
+ *
+ * 多窗口共用一个 dsh 实例时, 工作空间只有一份 ("最近工作空间"决定页面落在哪个项目):
+ * 预热页面必须**在同步完本项目工作空间之后立刻加载**, 否则可能落到别的项目上。
+ * 因此 [sequenceLock] 把 "同步工作空间 -> 加载页面 -> 页面完成首次选择" 串行化,
+ * 让每个窗口的预热页面都落在自己的工作空间上。
  */
 object DshWebUiWarmup {
 
@@ -45,6 +55,8 @@ object DshWebUiWarmup {
 
     /** 预热结果: 面板可整体复用 (client + 已加载页面), 或仅作为"CEF 已启动"的降级事实 */
     class Warmed internal constructor(
+        /** 本预热所属项目 (预热时同步的工作空间 = 该项目的) */
+        val project: Project,
         val client: JBCefClient,
         val browser: JBCefBrowser,
         internal val warmHandler: CefLoadHandler,
@@ -75,22 +87,36 @@ object DshWebUiWarmup {
         }
     }
 
-    /** 本会话是否已发起过预热 (只预热一次) */
+    /** 单个项目的预热状态 (每个项目一份) */
+    private class Slot {
+        /** 预热流程是否已结束 (无论成败; 由 run 的 finally 置位) */
+        @Volatile
+        var finished: Boolean = false
+
+        /** 预热结果是否已被面板取走 (取走后加载职责归面板) */
+        @Volatile
+        var taken: Boolean = false
+
+        /** 预热产出的浏览器 (未被取走时) */
+        @Volatile
+        var warmed: Warmed? = null
+    }
+
+    /** 保护 [slots] 的锁 (预热线程、面板 EDT 线程、等待线程都会访问) */
     private val lock = Any()
 
-    @Volatile
-    private var started = false
+    /** 项目 -> 预热状态 (每个项目只预热一次) */
+    private val slots = HashMap<Project, Slot>()
 
-    /** 预热流程是否已结束 (无论成败) */
-    @Volatile
-    private var finished = false
+    /**
+     * 串行化 "同步工作空间 -> 加载页面 -> 页面完成首次选择" (见类注释):
+     * 多窗口同时预热时, 各窗口的同步会互相把 dsh 的"最近工作空间"抢来抢去,
+     * 不加锁时先同步的窗口页面后加载、可能落在后同步的窗口项目上。
+     */
+    private val sequenceLock = ReentrantLock()
 
-    /** 预热结果是否已被面板取走 */
-    @Volatile
-    private var taken = false
-
-    @Volatile
-    private var warmed: Warmed? = null
+    /** 等页面加载完成的上限 (超时后放行, 面板接管后自行处理) */
+    private const val PAGE_LOAD_WAIT_MS = 20_000L
 
     /** 预热进行中时, 后续日志实时转发给已打开的面板 (面板打开早于预热完成时仍能看到进度) */
     @Volatile
@@ -101,31 +127,55 @@ object DshWebUiWarmup {
 
     /**
      * 发起预热 (IDE 启动自动启动流程调用): 等 dsh 就绪后同步工作空间并加载 WebUI。
-     * 幂等: 本会话只预热一次; 已有面板 / 设置未开启 / JCEF 不可用时跳过。
+     * 幂等: 每个项目只预热一次; 该项目的面板已存在 / 设置未开启 / JCEF 不可用时跳过。
      */
     fun warmupForProject(project: Project) {
         val settings = DshSettingsState.getInstance()
         if (settings.startMode != DshSettingsState.START_MODE_IDE) return
+        if (project.isDisposed) return
         // 面板已存在 (如工具窗口随项目自动恢复): 页面由面板自己管理, 不重复预热
-        if (DshToolWindowRegistry.hasAnyPanel()) return
+        if (DshToolWindowRegistry.hasPanel(project)) return
         // JCEF 可用性必须经 DshJcefSupport 反射探测: 直接调用 JBCefApp 在未提供 JCEF 的
         // IDE (2026.2 起 JCEF 为独立模块) 上会抛 NoClassDefFoundError, 中断插件启动活动
         if (!DshJcefSupport.isAvailable) return // JCEF 不可用: 交由面板的回退 UI 处理
-        synchronized(lock) {
-            if (started) return
-            started = true
+        val slot = synchronized(lock) {
+            pruneDisposedLocked()
+            if (slots.containsKey(project)) return // 该项目已发起过预热
+            Slot().also { slots[project] = it }
         }
-        Thread({ run(project) }, "dsh-plugin-webui-warmup").apply { isDaemon = true }.start()
+        Thread({ run(project, slot) }, "dsh-plugin-webui-warmup").apply { isDaemon = true }.start()
     }
 
     /**
-     * 取走预热结果 (面板创建时调用), 取走后本会话不再保留。
-     * @return 预热结果; 未预热 / 尚未创建出浏览器时返回 null
+     * 取走**本项目**的预热结果 (面板创建时优先调用), 取走后不再保留。
+     * @return 预热结果; 本项目未预热 / 尚未创建出浏览器时返回 null
      */
-    fun take(): Warmed? = synchronized(lock) {
-        val w = warmed
-        warmed = null
-        if (w != null) taken = true
+    fun takeOwn(project: Project): Warmed? = synchronized(lock) {
+        pruneDisposedLocked()
+        val slot = slots[project] ?: return null
+        val w = slot.warmed ?: return null
+        slot.warmed = null
+        slot.taken = true
+        // 结果已被取走: 该项目不会再产出预热结果 (仍等着的面板按"预热已结束"立即回退)
+        slot.finished = true
+        w
+    }
+
+    /**
+     * 借用**其他项目**的预热结果 (本项目没有自己的预热可用时调用)。
+     * 预热的工作空间不是本项目也没关系: 面板接管后会重新同步并切回本项目。
+     * 已加载完页面的结果优先 (接管即显示, 无需等页面加载)。
+     */
+    fun takeForeign(project: Project): Warmed? = synchronized(lock) {
+        pruneDisposedLocked()
+        val entry = slots.entries
+            .filter { it.key !== project && it.value.warmed != null }
+            .sortedByDescending { it.value.warmed?.pageLoaded == true }
+            .firstOrNull() ?: return null
+        val w = entry.value.warmed
+        entry.value.warmed = null
+        entry.value.taken = true
+        entry.value.finished = true
         w
     }
 
@@ -140,8 +190,23 @@ object DshWebUiWarmup {
         copy
     }
 
-    /** 预热是否进行中 (已发起、未结束; 供面板在预热未完成时给出提示) */
-    fun warmupInFlight(): Boolean = synchronized(lock) { started && !finished }
+    /** 本项目的预热是否进行中 (已发起、未结束; 供面板在预热未完成时给出提示) */
+    fun warmupInFlight(project: Project): Boolean = synchronized(lock) {
+        val slot = slots[project] ?: return false
+        !slot.finished
+    }
+
+    /** 清理已关闭项目的预热结果 (浏览器无人接管, 否则会一直留到 IDE 退出) */
+    private fun pruneDisposedLocked() {
+        val it = slots.entries.iterator()
+        while (it.hasNext()) {
+            val entry = it.next()
+            if (!entry.key.isDisposed) continue
+            entry.value.warmed?.dispose()
+            entry.value.warmed = null
+            it.remove()
+        }
+    }
 
     /** 日志时间戳格式 (DateTimeFormatter 不可变、线程安全, 可复用) */
     private val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
@@ -155,136 +220,172 @@ object DshWebUiWarmup {
         if (sink != null) sink.invoke(stamped) else logBuffer.add(stamped)
     }
 
-    private fun run(project: Project) {
-        // 预热"编排结束"(finished) 与"页面加载任务结束"必须同步: invokeLater 排队后立即返回,
-        // 若此时就置位 finished, 面板的 waitForWarmupThenAdopt 会立刻判定"预热已结束"而回退自建浏览器,
-        // 既浪费刚创建的预热页面, 又让预热浏览器无人接管 (泄漏到 IDE 退出)。因此 finished 由 EDT 任务
-        // 真正执行完 (无论成败) 时置位; 还没排进 EDT 就提前返回/异常时由外层兜底置位。
-        var scheduledEdt = false
+    private fun run(project: Project, slot: Slot) {
+        val settings = DshSettingsState.getInstance()
+        val port = settings.currentPort()
+        val label = project.name
         try {
-            val settings = DshSettingsState.getInstance()
-            val port = settings.currentPort()
-            log(DshBundle.message("log.warmup.start"))
+            log(DshBundle.message("log.warmup.start", label))
             // 1) 等 dsh 就绪 (启动流程可能仍在进行): 与 DshServer.waitForReady 同款端口轮询
             val readyDeadline = System.currentTimeMillis() + 90_000
             while (System.currentTimeMillis() < readyDeadline) {
                 if (DshServer.state == DshServer.State.RUNNING || WslSupport.isPortOpen(port)) break
+                if (project.isDisposed) return
                 try {
                     Thread.sleep(700)
                 } catch (_: InterruptedException) {
                     return
                 }
             }
+            if (project.isDisposed) return
             if (DshServer.state != DshServer.State.RUNNING && !WslSupport.isPortOpen(port)) {
                 log(DshBundle.message("log.warmup.giveUp", port.toString()))
                 return
             }
-            // 2) 工作空间同步 + 语言偏好 (与面板 loadWebUi 同序), 让预热加载的页面直接落在当前项目上
-            val dshPath = project.basePath?.let { DshReference.dshPathFromString(it, settings.launchMode) }
-            var sessionIds: List<String>? = null
-            var syncedPath: String? = null
-            if (dshPath != null) {
-                var result: DshWorkspaceApi.WorkspaceSyncResult? = null
-                val syncDeadline = System.currentTimeMillis() + 8000
-                while (result == null && System.currentTimeMillis() < syncDeadline) {
-                    result = DshWorkspaceApi.ensureProjectWorkspace(port, dshPath)
-                    if (result == null && System.currentTimeMillis() < syncDeadline) {
-                        try {
-                            Thread.sleep(700)
-                        } catch (_: InterruptedException) {
-                            break
-                        }
-                    }
-                }
-                if (result != null) {
-                    sessionIds = result.sessionIds
-                    syncedPath = dshPath
-                    log(DshBundle.message("log.workspaceReady", dshPath))
-                } else {
-                    log(DshBundle.message("log.workspaceSyncUnavailable"))
-                }
-                val dshLocale = DshWebUiInject.effectiveDshLocale(settings)
-                if (DshWorkspaceApi.syncLocalePreference(port, dshLocale)) {
-                    log(DshBundle.message("log.localeSet", dshLocale))
-                }
-            }
-            // 3) EDT 创建浏览器 (Swing 组件安全), 挂预热注入 handler 后加载页面
-            val edtTask = Runnable {
-                try {
-                    val pageLoadedFlag = AtomicBoolean(false)
-                    val jbClient = JBCefApp.getInstance().createClient()
-                    val b = JBCefBrowserBuilder().setClient(jbClient).build()
-                    // JS 通道必须在浏览器实体创建前建立 (见 DshWebUiFileOpen.createChannel);
-                    // 拦截脚本由接管该页面的面板注入
-                    val fileOpenChannel = DshWebUiFileOpen.createChannel(b, project, ::log)
-                    val handler = object : CefLoadHandlerAdapter() {
-                        override fun onLoadStart(
-                            browser: CefBrowser,
-                            frame: CefFrame,
-                            transitionType: CefRequest.TransitionType,
-                        ) {
-                            if (frame.isMain) {
-                                pageLoadedFlag.set(false)
-                                DshWebUiInject.injectUiThemeLocaleOverride(browser, settings) { log(it) }
-                                DshWebUiInject.clearPersistedSessionIfForeign(browser, sessionIds) { log(it) }
-                            }
-                        }
-
-                        override fun onLoadEnd(browser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
-                            if (frame.isMain) pageLoadedFlag.set(true)
-                        }
-                    }
-                    val w = Warmed(jbClient, b, handler, port, syncedPath, sessionIds, pageLoadedFlag, fileOpenChannel)
-                    synchronized(lock) {
-                        // 期间面板已自行创建 (取走过/本就无预热可复用): 释放刚创建的浏览器
-                        if (taken || warmed != null || project.isDisposed) {
-                            w.dispose()
-                            return@Runnable
-                        }
-                        warmed = w
-                    }
-                    jbClient.addLoadHandler(handler, b.cefBrowser)
-                    // 新版 dsh 的 WebUI 首页需带启动令牌访问 (换取认证 cookie)
-                    val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
-                    log(DshBundle.message("log.warmup.loading", url))
-                    b.loadURL(url)
-                    // 保险: 首次 loadURL 偶发未生效 (JCEF 初始化竞态) 时页面停在 about:blank,
-                    // onLoadEnd 永远不会置位加载完成标记 —— 8s 后仍未完成则重试一次。
-                    // 浏览器已被面板接管 (taken) 时加载职责归面板, 且预热 handler 已被摘除、
-                    // 加载标记不会再更新, 此时绝不能代为刷新 (否则页面会无端重载一次)
-                    val loadRetry = javax.swing.Timer(8000, null)
-                    loadRetry.addActionListener {
-                        loadRetry.stop()
-                        if (!taken && !pageLoadedFlag.get()) {
-                            try {
-                                val retryUrl = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
-                                b.loadURL(retryUrl)
-                            } catch (_: Throwable) {
-                            }
-                        }
-                    }
-                    loadRetry.isRepeats = false
-                    loadRetry.start()
-                } catch (t: Throwable) {
-                    LOG.warn("webui warmup failed", t)
-                    log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
-                } finally {
-                    finished = true
-                }
-            }
-            scheduledEdt = true
+            // 2) 串行执行 "同步本项目工作空间 -> 加载页面 -> 等页面完成首次选择" (见类注释)
+            sequenceLock.lock()
             try {
-                SwingUtilities.invokeLater(edtTask)
-            } catch (t: Throwable) {
-                // EDT 任务排队失败 (罕见): 预热不会再产出页面
-                LOG.warn("webui warmup EDT scheduling failed", t)
-                finished = true
+                if (project.isDisposed) return
+                // 工作空间同步 + 语言偏好 (与面板 loadWebUi 同序), 让预热加载的页面直接落在本项目上
+                val dshPath = project.basePath?.let { DshReference.dshPathFromString(it, settings.launchMode) }
+                var sessionIds: List<String>? = null
+                var syncedPath: String? = null
+                if (dshPath != null) {
+                    var result: DshWorkspaceApi.WorkspaceSyncResult? = null
+                    val syncDeadline = System.currentTimeMillis() + 8000
+                    while (result == null && System.currentTimeMillis() < syncDeadline) {
+                        result = DshWorkspaceApi.ensureProjectWorkspace(port, dshPath)
+                        if (result == null && System.currentTimeMillis() < syncDeadline) {
+                            try {
+                                Thread.sleep(700)
+                            } catch (_: InterruptedException) {
+                                break
+                            }
+                        }
+                    }
+                    if (result != null) {
+                        sessionIds = result.sessionIds
+                        syncedPath = dshPath
+                        log(DshBundle.message("log.workspaceReady", dshPath))
+                    } else {
+                        log(DshBundle.message("log.workspaceSyncUnavailable"))
+                    }
+                    val dshLocale = DshWebUiInject.effectiveDshLocale(settings)
+                    if (DshWorkspaceApi.syncLocalePreference(port, dshLocale)) {
+                        log(DshBundle.message("log.localeSet", dshLocale))
+                    }
+                }
+                // 3) EDT 创建浏览器 (Swing 组件安全), 挂预热注入 handler 后加载页面
+                createBrowserAndLoad(project, slot, settings, port, syncedPath, sessionIds, label)
+                // 4) 等页面加载完成 (或已被面板接管 / 本项目已关闭) 再放行下一个窗口的预热
+                val pageDeadline = System.currentTimeMillis() + PAGE_LOAD_WAIT_MS
+                while (System.currentTimeMillis() < pageDeadline) {
+                    val w = slot.warmed
+                    if (slot.taken || w == null || w.pageLoaded || project.isDisposed) break
+                    try {
+                        Thread.sleep(100)
+                    } catch (_: InterruptedException) {
+                        return
+                    }
+                }
+            } finally {
+                sequenceLock.unlock()
             }
         } catch (t: Throwable) {
             LOG.warn("webui warmup failed", t)
+            log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
         } finally {
-            // 未排进 EDT 就提前返回/异常: 预热确实不会再产出页面
-            if (!scheduledEdt) finished = true
+            // 浏览器已创建 (或创建失败): 面板的等待循环可以据此判定"预热已结束"
+            slot.finished = true
         }
+    }
+
+    /**
+     * 在 EDT 上创建浏览器、发布预热结果并加载页面 (阻塞到浏览器创建完成)。
+     * 页面加载完成后由 [startLoadRetry] 兜底重试。
+     */
+    private fun createBrowserAndLoad(
+        project: Project,
+        slot: Slot,
+        settings: DshSettingsState,
+        port: Int,
+        syncedPath: String?,
+        sessionIds: List<String>?,
+        label: String,
+    ) {
+        val task = Runnable {
+            try {
+                val pageLoadedFlag = AtomicBoolean(false)
+                val jbClient = JBCefApp.getInstance().createClient()
+                val b = JBCefBrowserBuilder().setClient(jbClient).build()
+                // JS 通道必须在浏览器实体创建前建立 (见 DshWebUiFileOpen.createChannel);
+                // 拦截脚本由接管该页面的面板注入
+                val fileOpenChannel = DshWebUiFileOpen.createChannel(b, project, ::log)
+                val handler = object : CefLoadHandlerAdapter() {
+                    override fun onLoadStart(
+                        browser: CefBrowser,
+                        frame: CefFrame,
+                        transitionType: CefRequest.TransitionType,
+                    ) {
+                        if (frame.isMain) {
+                            pageLoadedFlag.set(false)
+                            DshWebUiInject.injectUiThemeLocaleOverride(browser, settings) { log(it) }
+                            DshWebUiInject.clearPersistedSessionIfForeign(browser, sessionIds) { log(it) }
+                        }
+                    }
+
+                    override fun onLoadEnd(browser: CefBrowser, frame: CefFrame, httpStatusCode: Int) {
+                        if (frame.isMain) pageLoadedFlag.set(true)
+                    }
+                }
+                val w = Warmed(project, jbClient, b, handler, port, syncedPath, sessionIds, pageLoadedFlag, fileOpenChannel)
+                jbClient.addLoadHandler(handler, b.cefBrowser)
+                // 先把页面加载起来再发布预热结果: 面板一旦取走就由它接管 (可能不再发起加载),
+                // 先加载可保证"接管到的页面一定在加载中/已加载", 不会停在空白页
+                // 新版 dsh 的 WebUI 首页需带启动令牌访问 (换取认证 cookie)
+                val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+                log(DshBundle.message("log.warmup.loading", label, url))
+                b.loadURL(url)
+                synchronized(lock) {
+                    // 期间面板已自行创建/已取走过/项目已关闭: 释放刚创建的浏览器
+                    if (slot.taken || slot.warmed != null || project.isDisposed) {
+                        w.dispose()
+                        return@Runnable
+                    }
+                    slot.warmed = w
+                }
+                startLoadRetry(slot, b, port, pageLoadedFlag)
+            } catch (t: Throwable) {
+                LOG.warn("webui warmup failed", t)
+                log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
+            }
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            task.run()
+        } else {
+            SwingUtilities.invokeAndWait(task)
+        }
+    }
+
+    /**
+     * 保险: 首次 loadURL 偶发未生效 (JCEF 初始化竞态) 时页面停在 about:blank,
+     * onLoadEnd 永远不会置位加载完成标记 —— 8s 后仍未完成则重试一次。
+     * 浏览器已被面板接管 (taken) 时加载职责归面板, 且预热 handler 已被摘除、
+     * 加载标记不会再更新, 此时绝不能代为刷新 (否则页面会无端重载一次)。
+     */
+    private fun startLoadRetry(slot: Slot, b: JBCefBrowser, port: Int, pageLoadedFlag: AtomicBoolean) {
+        val loadRetry = javax.swing.Timer(8000, null)
+        loadRetry.addActionListener {
+            loadRetry.stop()
+            if (!slot.taken && !pageLoadedFlag.get()) {
+                try {
+                    val retryUrl = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+                    b.loadURL(retryUrl)
+                } catch (_: Throwable) {
+                }
+            }
+        }
+        loadRetry.isRepeats = false
+        loadRetry.start()
     }
 }

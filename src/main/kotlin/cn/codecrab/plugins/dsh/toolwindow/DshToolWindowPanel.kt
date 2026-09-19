@@ -281,14 +281,26 @@ class DshToolWindowPanel(
         content.isOpaque = false
         // 回放预热日志 (已按事件时刻打好时间戳, 原样追加) 并挂上实时转发接收预热后续日志
         for (line in DshWebUiWarmup.attachLiveSink { appendEdt(it) }) appendEdt(line)
-        val warmed = DshWebUiWarmup.take()
-        if (warmed == null && DshWebUiWarmup.warmupInFlight()) {
-            // 窗口随 IDE 启动恢复而预热仍在进行: 不再并行自建浏览器/同步 (与预热重复劳动),
+        val own = DshWebUiWarmup.takeOwn(project)
+        if (own == null && DshWebUiWarmup.warmupInFlight(project)) {
+            // 本项目预热仍在进行 (窗口随 IDE 启动恢复时常见): 不再并行自建浏览器/同步 (与预热重复劳动),
             // 先显示占位提示, 预热完成后直接复用其浏览器; 超时/放弃才回退自建
             appendLog(DshBundle.message("log.warmup.notReady"))
             waitForWarmupThenAdopt(content)
             return content
         }
+        // 本项目没有自己的预热可用 (未发起 / 已结束 / 已被取走): 借用其他窗口预热好的浏览器 ——
+        // 工作空间不一致也没关系, 接管后重新同步并切回本项目
+        if (own == null) {
+            val borrowed = DshWebUiWarmup.takeForeign(project)
+            if (borrowed != null) appendLog(DshBundle.message("log.warmup.borrowed", borrowed.project.name))
+            return finishContent(content, borrowed)
+        }
+        return finishContent(content, own)
+    }
+
+    /** 把预热结果 (可空) 应用到内容区: 可复用则接管, 否则释放后按原流程新建浏览器 */
+    private fun finishContent(content: JPanel, warmed: DshWebUiWarmup.Warmed?): JComponent {
         val holder = try {
             adoptWarmedBrowser(warmed)
                 // 预热结果不可复用 (原因已记入日志): 释放后按原流程创建
@@ -324,9 +336,9 @@ class DshToolWindowPanel(
             val deadline = System.currentTimeMillis() + 30_000
             var warmed: DshWebUiWarmup.Warmed? = null
             while (System.currentTimeMillis() < deadline) {
-                warmed = DshWebUiWarmup.take()
+                warmed = DshWebUiWarmup.takeOwn(project)
                 if (warmed != null) break
-                if (!DshWebUiWarmup.warmupInFlight()) break // 预热已结束 (放弃/失败): 立即回退
+                if (!DshWebUiWarmup.warmupInFlight(project)) break // 预热已结束 (放弃/失败): 立即回退
                 if (project.isDisposed) return@Thread
                 try {
                     Thread.sleep(300)
@@ -334,6 +346,8 @@ class DshToolWindowPanel(
                     return@Thread
                 }
             }
+            // 本项目预热没产出可用页面: 借用其他窗口预热好的浏览器 (接管后切回本项目工作空间)
+            if (warmed == null) warmed = DshWebUiWarmup.takeForeign(project)
             SwingUtilities.invokeLater {
                 waitingForWarmup = false
                 if (project.isDisposed) {
@@ -384,8 +398,11 @@ class DshToolWindowPanel(
      * 复用预热好的内嵌浏览器 ([DshWebUiWarmup]); 不可复用返回 null (由调用方释放并新建, 原因记入日志)。
      * 复用条件: 端口与当前设置一致、dsh 在运行; 页面未加载完也可先接管 (见下)。
      * 复用时把加载注入 (主题/语言/会话清除/引用暂存) 切换为本面板接管。
-     *  - 页面已加载: 直接显示, **不再重新同步** (预热时已同步过; 工作空间不一致才补一次同步刷新);
-     *  - 页面尚未加载完: 接管后短暂宽限等待预热加载完成, 超时才交回看门狗走"同步 -> 加载"流程。
+     *  - 页面已加载且工作空间就是本项目: 直接显示, **不再重新同步**;
+     *  - 工作空间不是本项目 (多窗口下借用了其他窗口的预热, 或预热同步失败): 同样复用这个浏览器,
+     *    只为本项目重新同步工作空间并切回本项目页面 —— 复用省下的是 CEF 冷启动与建浏览器的大头,
+     *    切换工作空间只是一次页面加载;
+     *  - 页面尚未加载完且工作空间一致: 接管后短暂宽限等待预热加载完成, 超时才交回看门狗走"同步 -> 加载"流程。
      */
     private fun adoptWarmedBrowser(warmed: DshWebUiWarmup.Warmed?): JComponent? {
         if (warmed == null) return null
@@ -400,14 +417,8 @@ class DshToolWindowPanel(
             )
             return null
         }
+        // 预热的工作空间不是本项目 (借用其他窗口的预热 / 预热时同步失败): 复用浏览器, 接管后切回本项目
         val workspaceMismatch = warmed.syncedDshPath != currentProjectDshPath()
-        if (!warmed.pageLoaded && workspaceMismatch) {
-            // 页面未加载完且预热的工作空间也不是本项目: 复用无意义, 走正常"同步 -> 加载"
-            appendLog(
-                DshBundle.message("log.warmup.notAdopted", DshBundle.message("log.warmup.reason.workspace"))
-            )
-            return null
-        }
         val b = warmed.browser
         val jbClient = warmed.client
         try {
@@ -432,20 +443,24 @@ class DshToolWindowPanel(
         if (!DshDisposer.register(parentDisposable, b)) {
             appendLog(DshBundle.message("log.browserDisposeWarn"))
         }
-        if (warmed.pageLoaded) {
-            // 页面已就绪: 直接显示, 不重新同步 (预热时已同步过本项目工作空间)
+        if (workspaceMismatch) {
+            // 复用浏览器, 但页面上的工作空间不是本项目: 立即为本项目同步并加载 (页面未加载完时同样处理,
+            // 在途的预热加载会被这次加载取代 —— 但 CEF 冷启动与浏览器创建已经省下)
+            webUiLoaded = true
+            pageLoaded = false
+            appendLog(DshBundle.message("log.warmup.adoptedSwitch"))
+            SwingUtilities.invokeLater {
+                if (!project.isDisposed) loadWebUi()
+            }
+        } else if (warmed.pageLoaded) {
+            // 页面已就绪且就是本项目: 直接显示, 不重新同步 (预热时已同步过本项目工作空间)
             webUiLoaded = true
             pageLoaded = true
             appendLog(DshBundle.message("log.warmup.adopted"))
-            // 预热页面不会再触发 onLoadEnd, 这里补注入一次点击拦截脚本
-            installFileOpenBridge()
-            if (workspaceMismatch) {
-                SwingUtilities.invokeLater {
-                    if (!project.isDisposed) loadWebUi()
-                }
-            }
+            // 预热页面不会再触发 onLoadEnd, 这里补注入一次页面脚本 (点击拦截 / 会话列表定位)
+            installPageScripts()
         } else {
-            // 页面尚未加载完: 先接管并短暂宽限等待其加载完成 (onLoadEnd 置位 pageLoaded);
+            // 页面尚未加载完 (工作空间一致): 先接管并短暂宽限等待其加载完成 (onLoadEnd 置位 pageLoaded);
             // 超时未完成则放行 (webUiLoaded=false), 由看门狗走"同步 -> 加载"流程
             webUiLoaded = true
             pageLoaded = false
@@ -498,15 +513,19 @@ class DshToolWindowPanel(
                 flushPendingReference()
                 // 工作空间同步失败时, 页面加载完成后自动刷新一次重试 (与手动刷新等效)
                 autoReloadAfterSyncFailure()
-                installFileOpenBridge()
+                installPageScripts()
             }
         }
     }
 
-    /** 注入「点击文件路径在 IDE 中打开」的拦截脚本 (页面加载完成 / 接管已加载的预热页面时调用) */
-    private fun installFileOpenBridge() {
+    /**
+     * 页面脚本注入 (页面加载完成 / 接管已加载的预热页面时调用, 重复调用幂等):
+     * 「点击文件路径在 IDE 中打开」的点击拦截 + 侧边栏会话列表定位
+     */
+    private fun installPageScripts() {
         val b = browser ?: return
         fileOpenChannel?.install(b, project)
+        DshWebUiSidebarLocate.install(b, ::appendLog)
     }
 
     // ---------- 引用注入 (右键菜单发送) ----------

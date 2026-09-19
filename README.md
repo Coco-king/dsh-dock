@@ -29,10 +29,12 @@ no terminal or separate browser needed.
    editors update to the new content immediately — no more stale code or reopening files
 7. **File paths open in the IDE**: Clicking a file path in the dsh WebUI opens it in the IDE
    editor — jumping to the line or the edited content when dsh knows it — instead of the dsh sidebar preview
-8. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
+8. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar scrolls straight to the
+   current session and highlights the workspace group it belongs to, so long session lists stay navigable
+9. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
-9. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
-10. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
+10. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
+11. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
 
@@ -55,9 +57,11 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
 7. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径时在 IDE 编辑器中打开（能定位到行号或编辑内容），
    不再使用 dsh 侧边栏预览；打不开时仍走 dsh 预览
-8. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-9. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
-10. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
+8. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时，自动定位到当前会话，并高亮它所在的工作空间分组，
+   会话很多时也能一眼看清"我在哪个工作空间、当前会话在哪"
+9. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+10. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
+11. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址
@@ -82,7 +86,10 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   注意：新版 dsh（0.1.2-rc.1 起）带启动令牌认证，外部启动的实例插件拿不到令牌，页面会停在
   认证提示页（日志有说明）——请通过插件启动 dsh，或手动打开 dsh web 打印的带 token 地址
 - **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台预热 dsh 与内嵌浏览器页面，
-  首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止
+  首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止。
+  多窗口时**每个项目窗口各自在后台预热自己的一份浏览器**：哪个窗口首次打开工具窗口都是直接复用，
+  不必现场冷启动浏览器；某个窗口自己的预热还没好时，也可以先复用其他窗口预热好的浏览器，
+  接管后再把工作空间切回本窗口的项目
 - **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
   `@路径` 引用直接发送到 Dsh 输入框（自动打开工具窗口、必要时自动启动 dsh）：
   - 选中代码 → `@<path>#L<start>-<end>`（如 `@/mnt/c/.../.gitignore#L5-6`）
@@ -100,6 +107,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   通知的老问题也一并解决）；有未保存修改的文件不会被覆盖；默认开启，可在设置中关闭
 - **点击文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径（含文件提及、「打开」按钮）时在 IDE 编辑器中打开，
   能定位行号或编辑新增内容；打不开时自动回退为 dsh 侧边栏预览。默认开启，可在设置中关闭
+- **侧边栏会话列表自动定位**：打开 dsh 左侧边栏的会话列表（展开侧边栏、切回会话面板或页面加载完成）时，
+  自动把**当前会话**滚动到可视区中间，并**高亮当前工作空间分组**（分组标题行加底色与强调条）；
+  当前会话所在分组被折叠、或会话被「展开更多」折叠时会先自动展开；已经可见时不打扰、不滚动
 - **进程管理**：启动 / 停止 / 刷新 / 在系统浏览器中打开，状态一目了然
 - **操作日志**：底部日志面板展示 dsh 进程输出，方便排查问题
 - **宽版本支持**：支持 IntelliJ IDEA 2024.2 (242) 及以上的所有版本（不设上限），并打包 Kotlin stdlib 以兼容旧版 IDE

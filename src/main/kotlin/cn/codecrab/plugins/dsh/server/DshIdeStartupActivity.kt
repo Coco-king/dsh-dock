@@ -18,7 +18,10 @@ import com.intellij.openapi.startup.ProjectActivity
  * 让 dsh 提前完成启动与端口监听, 并同步预热内嵌浏览器页面 ([DshWebUiWarmup]);
  * 用户首次打开 Dsh Dock 工具窗口时 WebUI 已就绪, 显著缩短首次等待时间。
  *
- * - 每个 IDE 会话只自动启动一次 (仅首次打开项目时触发): 之后用户手动停止 dsh、
+ * - **每个项目窗口各自预热自己的内嵌浏览器** (一个 JCEF 浏览器只能挂在一个窗口里,
+ *   多窗口下各窗口都需要自己的一份, 见 [DshWebUiWarmup]): 任何窗口首次打开工具窗口
+ *   都能直接复用预热好的页面, 不必现场冷启动 CEF;
+ * - dsh 进程每个 IDE 会话只自动启动一次 (仅首次打开项目时触发): 之后用户手动停止 dsh、
  *   再打开其他项目窗口不会被意外重新拉起;
  * - 多项目窗口: 首个打开的项目发起启动, 后续项目因已在启动/运行而自然跳过;
  * - 端口已有外部 dsh: [DshServer.start] 识别端口占用后直接按运行处理, 不重复启动;
@@ -32,17 +35,14 @@ class DshIdeStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
         val settings = DshSettingsState.getInstance()
         if (settings.startMode != DshSettingsState.START_MODE_IDE) return
-        if (autoStartedThisSession) return
-        // 活动在后台执行, 项目可能已被关闭 (避免把本次会话标记为已启动而漏掉后续项目的自动启动)
+        // 活动在后台执行, 项目可能已被关闭
         if (project.isDisposed) return
-        autoStartedThisSession = true
-        if (DshServer.state != DshServer.State.IDLE) {
-            // 已在启动/运行 (含外部启动的同端口 dsh): 无需启动 dsh, 但仍预热内嵌浏览器页面
-            DshWebUiWarmup.warmupForProject(project)
-            return
-        }
-        // 后台启动 dsh 的同时预热内嵌浏览器 (等 dsh 就绪后自动加载 WebUI)
+        // 每个项目窗口都后台预热自己的内嵌浏览器页面 (多窗口下各窗口首次打开都要快)
         DshWebUiWarmup.warmupForProject(project)
+        // dsh 进程本会话只自动启动一次 (仅首次打开项目时触发)
+        if (autoStartedThisSession) return
+        autoStartedThisSession = true
+        if (DshServer.state != DshServer.State.IDLE) return // 已在启动/运行 (含外部启动的同端口 dsh)
         // 后台线程启动, 不阻塞项目打开; 启动全流程 (探测/拉起/端口轮询) 均在后台完成
         Thread({ autoStart(project) }, "dsh-plugin-ide-startup").apply { isDaemon = true }.start()
     }
