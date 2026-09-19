@@ -78,6 +78,47 @@ object DshWebUiInject {
     }
 
     /**
+     * 加载页面前把本项目工作空间的"落地会话"写进页面持久化选择 (`dsh.sessions.current`)。
+     *
+     * 背景: dsh 页面加载时若没有可恢复的会话, 就按**全局的"最近工作空间"**选会话 —— 多窗口共用
+     * 一个 dsh 实例时这份状态是共享的, 别的窗口同步工作空间、甚至只是在别的项目里聊天都会把它
+     * 改掉, 于是本窗口的页面会落到别的项目上。把本项目的落地会话钉进去, 落地就与那份共享状态无关。
+     *
+     * 只在"当前选择不属于本项目工作空间"(或没有选择) 时才写, 保留用户本来就在本项目里的会话位置;
+     * [sessionIds] / [landingSessionId] 为空时不动 (无从判断)。写入只在当前文档已是同一 dsh 页面
+     * (同源) 时有效 —— 首次加载 (about:blank) 写不进去, 由页面脚本注入的落地纠正兜底。
+     */
+    fun pinSessionSelection(
+        browser: CefBrowser,
+        landingSessionId: String?,
+        sessionIds: List<String>?,
+        onLog: (String) -> Unit,
+    ) {
+        if (landingSessionId.isNullOrBlank()) return
+        val idsJs = (sessionIds ?: emptyList())
+            .joinToString(prefix = "[", postfix = "]", separator = ",") { jsString(it) }
+        val script = """
+            |(function () {
+            |  try {
+            |    var LANDING = ${jsString(landingSessionId)};
+            |    var IDS = $idsJs;
+            |    var raw = localStorage.getItem("dsh.sessions.current");
+            |    if (raw) {
+            |      var o = JSON.parse(raw);
+            |      if (o && typeof o.sessionId === "string" && IDS.indexOf(o.sessionId) !== -1) return;
+            |    }
+            |    localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: LANDING }));
+            |  } catch (err) {}
+            |})();
+        """.trimMargin()
+        try {
+            browser.executeJavaScript(script, "dsh://ide-session-pin.js", 0)
+        } catch (t: Throwable) {
+            onLog(DshBundle.message("log.sessionPinFailed", t.message ?: "null"))
+        }
+    }
+
+    /**
      * 清除"不属于当前项目工作空间"的持久化会话选择 (页面加载前调用)。
      * dsh WebUI 会把"上次打开的会话"持久化到浏览器 localStorage (dsh.sessions.current),
      * 页面加载时会恢复它, 从而跳过工作空间的初始选中逻辑, 导致页面停留在旧项目。

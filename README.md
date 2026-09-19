@@ -22,7 +22,8 @@ no terminal or separate browser needed.
    following, language and file sync) keeps working; only when no cookie is available does the page
    show the auth prompt — start (or restart) dsh from the plugin in that case
 4. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
-   with multiple open windows it follows the **active window**, so other windows never hijack the project space
+   with multiple open windows it follows the **active window**, and every window's page is pinned to its own
+   project, so windows sharing one dsh never leak workspaces into each other
 5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
    reference with one click, so the assistant can read the file when needed
 6. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
@@ -55,7 +56,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    语言与文件同步都照常工作；只有浏览器里也没有可用 cookie 时页面才会停在认证提示页，
    这种情况请通过插件启动（或重启）dsh
 4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
-   其他窗口不会抢占项目空间
+   且每个窗口的页面都固定在自己的项目上，多个窗口共用一个 dsh 也不会互相串工作空间
 5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
 6. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
@@ -105,7 +106,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **项目空间默认项目根目录**：以当前打开的项目根路径作为 dsh 的工作目录启动，
   并自动把当前项目同步为 WebUI 的会话工作空间（即使上次用过别的项目，也会切回当前项目）。
   多个窗口同时打开插件页时，工作空间跟随当前**活动窗口**：后台窗口不刷新页面、不抢占，
-  切换到某窗口时若工作空间已是自己的项目则不打扰（dsh 页面会自动重连自愈），必要时才切回
+  切换到某窗口时若工作空间已是自己的项目则不打扰（dsh 页面会自动重连自愈），必要时才切回。
+  多窗口共用一个 dsh 时，每个窗口的页面还会被**钉在自己的项目上**：加载时直接打开本项目的会话，
+  加载后若发现落在别的项目上会自动切回（点开本项目会话，必要时才刷新），窗口之间不再互相串
 - **主题/语言**：WebUI 主题跟随 IDE（暗色 IDE 自动深色）；语言可选跟随 IDE/浏览器、简体中文或 English
   （跟随模式下按 IDE 界面语言自动同步 dsh 语言偏好：英文 IDE 显示英文 WebUI，中文 IDE 显示中文 WebUI）
 - **dsh 编辑后自动刷新**：dsh 的文件写入类工具（Edit / str_replace_editor / write 等）成功执行完时，

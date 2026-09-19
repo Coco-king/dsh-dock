@@ -66,8 +66,10 @@ object DshWebUiWarmup {
         val port: Int,
         /** 预热时同步成功的工作空间 dsh 路径 (null = 同步失败, 面板复用后会重新同步) */
         val syncedDshPath: String?,
-        /** 同步得到的会话 id (供面板接管后清除"不属于本项目"的持久化会话) */
+        /** 同步得到的会话 id (供面板接管后把页面固定在本项目工作空间) */
         val sessionIds: List<String>?,
+        /** 同步得到的"落地会话": 页面应打开的会话 (见 DshWorkspaceApi.WorkspaceSyncResult) */
+        val landingSessionId: String?,
         private val pageLoadedFlag: AtomicBoolean,
         /** 页面→IDE 的 JS 通道 (「点击文件路径在 IDE 中打开」用; 必须在浏览器创建前建立, 只能随浏览器一起移交) */
         val fileOpenChannel: DshWebUiFileOpen.Channel?,
@@ -119,6 +121,12 @@ object DshWebUiWarmup {
 
     /** 等页面加载完成的上限 (超时后放行, 面板接管后自行处理) */
     private const val PAGE_LOAD_WAIT_MS = 20_000L
+
+    /** 加载观察宽限期: loadURL 之后要过这么久, "当前没在加载"才可信 (导航还没开始的空档) */
+    private const val PAGE_NAVIGATION_GRACE_MS = 700L
+
+    /** 页面加载完成后再稳定这么久才放行下一个窗口的预热 (留给 dsh 客户端完成工作空间/会话选择) */
+    private const val PAGE_SETTLE_MS = 500L
 
     /** 预热进行中时, 后续日志实时转发给已打开的面板 (面板打开早于预热完成时仍能看到进度) */
     @Volatile
@@ -271,6 +279,7 @@ object DshWebUiWarmup {
                 // 工作空间同步 + 语言偏好 (与面板 loadWebUi 同序), 让预热加载的页面直接落在本项目上
                 val dshPath = project.basePath?.let { DshReference.dshPathFromString(it, settings.launchMode) }
                 var sessionIds: List<String>? = null
+                var landingSessionId: String? = null
                 var syncedPath: String? = null
                 if (dshPath != null) {
                     var result: DshWorkspaceApi.WorkspaceSyncResult? = null
@@ -287,6 +296,7 @@ object DshWebUiWarmup {
                     }
                     if (result != null) {
                         sessionIds = result.sessionIds
+                        landingSessionId = result.landingSessionId
                         syncedPath = dshPath
                         log(DshBundle.message("log.workspaceReady", dshPath))
                     } else {
@@ -298,18 +308,11 @@ object DshWebUiWarmup {
                     }
                 }
                 // 3) EDT 创建浏览器 (Swing 组件安全), 挂预热注入 handler 后加载页面
-                createBrowserAndLoad(project, slot, settings, port, syncedPath, sessionIds, label)
-                // 4) 等页面加载完成 (或已被面板接管 / 本项目已关闭) 再放行下一个窗口的预热
-                val pageDeadline = System.currentTimeMillis() + PAGE_LOAD_WAIT_MS
-                while (System.currentTimeMillis() < pageDeadline) {
-                    val w = slot.warmed
-                    if (slot.taken || w == null || w.pageLoaded || project.isDisposed) break
-                    try {
-                        Thread.sleep(100)
-                    } catch (_: InterruptedException) {
-                        return
-                    }
-                }
+                val warmed = createBrowserAndLoad(
+                    project, slot, settings, port, syncedPath, sessionIds, landingSessionId, label,
+                )
+                // 4) 等这个页面加载完成并稳定后再放行下一个窗口的预热
+                if (warmed != null) awaitPageReady(warmed, project)
             } finally {
                 sequenceLock.unlock()
             }
@@ -333,8 +336,10 @@ object DshWebUiWarmup {
         port: Int,
         syncedPath: String?,
         sessionIds: List<String>?,
+        landingSessionId: String?,
         label: String,
-    ) {
+    ): Warmed? {
+        val created = java.util.concurrent.atomic.AtomicReference<Warmed?>(null)
         val task = Runnable {
             try {
                 val pageLoadedFlag = AtomicBoolean(false)
@@ -367,7 +372,10 @@ object DshWebUiWarmup {
                         }
                     }
                 }
-                val w = Warmed(project, jbClient, b, handler, port, syncedPath, sessionIds, pageLoadedFlag, fileOpenChannel)
+                val w = Warmed(
+                    project, jbClient, b, handler, port, syncedPath, sessionIds, landingSessionId,
+                    pageLoadedFlag, fileOpenChannel,
+                )
                 jbClient.addLoadHandler(handler, b.cefBrowser)
                 // 先把页面加载起来再发布预热结果: 面板一旦取走就由它接管 (可能不再发起加载),
                 // 先加载可保证"接管到的页面一定在加载中/已加载", 不会停在空白页
@@ -384,6 +392,7 @@ object DshWebUiWarmup {
                     slot.warmed = w
                 }
                 startLoadRetry(slot, b, port, pageLoadedFlag)
+                created.set(w)
             } catch (t: Throwable) {
                 LOG.warn("webui warmup failed", t)
                 log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
@@ -393,6 +402,42 @@ object DshWebUiWarmup {
             task.run()
         } else {
             SwingUtilities.invokeAndWait(task)
+        }
+        return created.get()
+    }
+
+    /**
+     * 等页面加载完成并稳定 ([PAGE_SETTLE_MS]) 再放行下一个窗口的预热。
+     *
+     * **面板提前接管 (taken) 也要等**: 共享 dsh 的"最近工作空间"只有一份, 本窗口页面还没完成
+     * 工作空间/会话选择时, 别的窗口一旦同步工作空间, 本窗口的页面就会落到别的项目上
+     * —— 这正是"多窗口同时打开时工作空间互相串"的根因之一。
+     * 面板接管后预热的 load handler 已被摘除, 改用浏览器自身的加载状态判断。
+     */
+    private fun awaitPageReady(w: Warmed, project: Project) {
+        val start = System.currentTimeMillis()
+        val deadline = start + PAGE_LOAD_WAIT_MS
+        var settledAt = 0L
+        while (System.currentTimeMillis() < deadline && !project.isDisposed) {
+            val now = System.currentTimeMillis()
+            val loading = try {
+                w.browser.cefBrowser.isLoading
+            } catch (_: Throwable) {
+                false
+            }
+            // loadURL 之后导航可能还没开始 (此时 isLoading 也是 false, 不可信): 过了宽限期才算数
+            val navigationObserved = w.pageLoaded || now - start >= PAGE_NAVIGATION_GRACE_MS
+            if (navigationObserved && !loading) {
+                if (settledAt == 0L) settledAt = now
+                if (now - settledAt >= PAGE_SETTLE_MS) return
+            } else {
+                settledAt = 0L
+            }
+            try {
+                Thread.sleep(100)
+            } catch (_: InterruptedException) {
+                return
+            }
         }
     }
 

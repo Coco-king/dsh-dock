@@ -118,6 +118,10 @@ class DshToolWindowPanel(
     @Volatile
     private var syncSessionIds: List<String>? = null
 
+    /** 最近一次同步得到的"落地会话": 页面应打开的会话 (多窗口共用一个 dsh 时用来把页面钉在本项目) */
+    @Volatile
+    private var syncLandingSessionId: String? = null
+
     /**
      * 本次工作空间同步是否失败。dsh API 偶尔在端口就绪后仍有一小段未就绪窗口,
      * 同步失败时页面仍会加载, 但工作空间不会切到当前项目 (手动刷新可恢复)。
@@ -443,6 +447,7 @@ class DshToolWindowPanel(
         // 沿用预热时建立的 JS 通道 (浏览器实体已创建, 此时无法再新建可用的通道)
         fileOpenChannel = warmed.fileOpenChannel
         syncSessionIds = warmed.sessionIds
+        syncLandingSessionId = warmed.landingSessionId
         lastSyncedPath = warmed.syncedDshPath
         // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
         if (!DshDisposer.register(parentDisposable, b)) {
@@ -562,7 +567,7 @@ class DshToolWindowPanel(
     private fun installPageScripts() {
         val b = browser ?: return
         fileOpenChannel?.install(b, project)
-        DshWebUiSidebarLocate.install(b, ::appendLog)
+        DshWebUiSidebarLocate.install(b, syncLandingSessionId, syncSessionIds, ::appendLog)
         DshJcefCookies.adoptAuthCookieAsync(settings.currentPort()) {
             appendLog(DshBundle.message("log.authCookieAdopted"))
             SwingUtilities.invokeLater {
@@ -761,6 +766,17 @@ class DshToolWindowPanel(
         startRequestedByThisPanel = DshServer.start(project.basePath, ::appendLog)
     }
 
+    /**
+     * 在页面里加载 dsh WebUI: 加载前先把本项目工作空间的"落地会话"钉进页面持久化选择
+     * (见 [DshWebUiInject.pinSessionSelection]) —— 页面加载后会直接打开它, 不再依赖 dsh 那份
+     * 全局的"最近工作空间" (多窗口共用一个 dsh 时会被别的窗口同步或聊天改掉)。
+     * 写入只在当前文档已是 dsh 页面 (同源) 时有效, 首次加载由页面脚本兜底纠正。
+     */
+    private fun loadBrowserUrl(url: String) {
+        browser?.let { DshWebUiInject.pinSessionSelection(it.cefBrowser, syncLandingSessionId, syncSessionIds, ::appendLog) }
+        browser?.loadURL(url)
+    }
+
     private fun reloadWebUi() {
         if (jcefAvailable) {
             // 手动刷新: 立即重载页面 (同步转后台), 不再等同步链路走完才动
@@ -797,7 +813,7 @@ class DshToolWindowPanel(
         if (projectPath == null) {
             val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
             appendLog(DshBundle.message("log.loaded", url))
-            browser?.loadURL(url)
+            loadBrowserUrl(url)
             return
         }
         if (!isActiveWindow()) {
@@ -814,7 +830,7 @@ class DshToolWindowPanel(
             // 先立即重载页面, 让刷新按钮即时生效
             val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
             appendLog(DshBundle.message("log.loaded", url))
-            browser?.loadURL(url)
+            loadBrowserUrl(url)
         }
         appendLog(DshBundle.message("log.syncingWorkspace", projectPath))
         Thread({
@@ -840,8 +856,9 @@ class DshToolWindowPanel(
                 }
                 if (result != null) {
                     appendLog(DshBundle.message("log.workspaceReady", dshPath ?: projectPath))
-                    // 记录当前项目的 sessionIds, 供 onLoadStart 清除不属于本项目的持久化会话选择
+                    // 记录当前项目的 sessionIds 与落地会话, 供 onLoadStart / 页面脚本把页面固定在本项目
                     syncSessionIds = result.sessionIds
+                    syncLandingSessionId = result.landingSessionId
                     workspaceSyncFailed = false
                     syncAutoReloaded = false
                     // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)
@@ -879,19 +896,19 @@ class DshToolWindowPanel(
                                     if (r == null) "log.syncFailedAutoReload" else "log.workspaceSwitchedReload"
                                 )
                             )
-                            browser?.loadURL(url)
+                            loadBrowserUrl(url)
                         }
                         // 仅核对模式: 工作空间本就是这个项目 -> 页面保持原样; 确实切了才刷新
                         reloadOnlyWhenBumped -> {
                             if (r != null && r.bumped) {
                                 appendLog(DshBundle.message("log.workspaceSwitchedReload"))
-                                browser?.loadURL(url)
+                                loadBrowserUrl(url)
                             }
                         }
                         // 同步前已加载且工作空间无需切换: 页面已正确, 无需再刷
                         !loadFirst -> {
                             appendLog(DshBundle.message("log.loaded", url))
-                            browser?.loadURL(url)
+                            loadBrowserUrl(url)
                         }
                     }
                 }

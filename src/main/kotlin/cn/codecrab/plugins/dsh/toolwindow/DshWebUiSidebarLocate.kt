@@ -5,8 +5,13 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.ui.jcef.JBCefBrowser
 
 /**
- * dsh WebUI 左侧边栏「会话列表」的自动定位与当前工作空间高亮:
+ * dsh WebUI 左侧边栏「会话列表」的自动定位与当前工作空间高亮, 并负责**落地到本项目工作空间**:
  *
+ *  - **落地纠正**: dsh 页面加载时若没有可恢复的会话, 会按**全局的"最近工作空间"**选会话 ——
+ *    多窗口共用一个 dsh 实例时这份状态是共享的 (别的窗口同步工作空间、或在别的项目里聊天都会
+ *    改掉它), 本窗口的页面就可能落到别的项目上。注入脚本在页面加载完成后核对当前会话:
+ *    不属于本项目工作空间时, 优先**直接点开本项目会话那一行** (无刷新切回本项目);
+ *    目标行没渲染出来时退回"钉住落地会话 + 刷新一次"(有防循环保护);
  *  - **自动定位**: 打开侧边栏会话列表 (展开侧边栏 / 切回会话面板 / 页面加载完成) 时,
  *    以及之后**切换工作空间/会话**时, 把当前会话那一行滚动到列表可视区域
  *    (已在可视区内则不动, 不打扰用户);
@@ -18,9 +23,8 @@ import com.intellij.ui.jcef.JBCefBrowser
  * 实现方式与 [DshWebUiFileOpen] 一致: 页面加载完成后注入一小段 JS, 用
  * dsh 客户端 CSS Module 类名后缀 (`_groupSection` / `_projectRow` / `_sessionRow` /
  * `_sessionOverflowButton`) 与 `role=treeitem` / `aria-selected` / `aria-expanded` 这些
- * 稳定语义属性识别元素 —— dsh 改版后若识别失效, 只是不再定位/高亮 (退回 dsh 原行为),
- * 不会有副作用。仅"分组被折叠导致当前会话行不在 DOM 里"这一种情形需要读 React fiber
- * 里的分组事实 (与文件路径桥接同款做法), 取不到时只跳过高亮。
+ * 稳定语义属性识别元素 —— dsh 改版后若识别失效, 只是不再定位/高亮/纠正 (退回 dsh 原行为),
+ * 不会有副作用。分组事实与会话 id 需要读 React fiber (与文件路径桥接同款做法), 取不到时跳过。
  */
 object DshWebUiSidebarLocate {
 
@@ -29,10 +33,23 @@ object DshWebUiSidebarLocate {
     /**
      * 注入定位脚本 (主框架加载完成后调用; 同一文档重复调用幂等)。
      * 页面每次重新加载都会重新注入 (上一个文档的脚本随文档一起销毁)。
+     *
+     * @param landingSessionId 本项目工作空间的"落地会话" (见 DshWorkspaceApi.pickLandingSession);
+     *   页面落在别的项目上时用它切回本项目, null 时不做落地纠正
+     * @param workspaceSessionIds 本项目工作空间当前的会话 id 集合, 用于判断页面是否已在本项目上
      */
-    fun install(browser: JBCefBrowser, onLog: (String) -> Unit) {
+    fun install(
+        browser: JBCefBrowser,
+        landingSessionId: String?,
+        workspaceSessionIds: List<String>?,
+        onLog: (String) -> Unit,
+    ) {
         try {
-            browser.cefBrowser.executeJavaScript(locateScript(), "dsh://ide-sidebar-locate.js", 0)
+            browser.cefBrowser.executeJavaScript(
+                locateScript(landingSessionId, workspaceSessionIds),
+                "dsh://ide-sidebar-locate.js",
+                0,
+            )
             onLog(DshBundle.message("log.sidebarLocateInjected"))
         } catch (t: Throwable) {
             LOG.warn("inject sidebar locate script failed", t)
@@ -41,7 +58,11 @@ object DshWebUiSidebarLocate {
     }
 
     /** 注入脚本 (逐行 trimMargin; JS 里不使用 `$`, 避免与 Kotlin 模板冲突) */
-    private fun locateScript(): String = """
+    private fun locateScript(landingSessionId: String?, workspaceSessionIds: List<String>?): String {
+        val landingJs = if (landingSessionId.isNullOrBlank()) "null" else DshWebUiInject.jsString(landingSessionId)
+        val idsJs = (workspaceSessionIds ?: emptyList())
+            .joinToString(prefix = "[", postfix = "]", separator = ",") { DshWebUiInject.jsString(it) }
+        return """
         |(function () {
         |  if (window.__dshIdeSidebarLocateBound) return;
         |  window.__dshIdeSidebarLocateBound = true;
@@ -50,6 +71,16 @@ object DshWebUiSidebarLocate {
         |  var STYLE_ID = "dsh-ide-sidebar-locate-style";
         |  var TICK_MS = 1200;
         |  var DEBOUNCE_MS = 400;
+        |  // 落地纠正用: 本项目工作空间的落地会话 + 该工作空间当前的会话 id 集合
+        |  var LANDING = $landingJs;
+        |  var IDS = $idsJs;
+        |  var LANDING_MIN_WAIT_MS = 1500;
+        |  var LANDING_GIVE_UP_MS = 8000;
+        |  var RELOAD_GUARD_KEY = "dsh.ide.landingReloadAt";
+        |  var RELOAD_GUARD_MS = 30000;
+        |  var landingStartedAt = Date.now();
+        |  var landingDone = LANDING === null || IDS.length === 0;
+        |  var userTouched = false;
         |
         |  // 高亮样式: 复用 dsh 自己的主题变量 (明暗主题都自然)。标记用自定义 data 属性而不是加 class ——
         |  // React 重渲染会重写 className 把 class 抹掉, 但它不管这个属性, 标记能稳定留着。
@@ -124,17 +155,82 @@ object DshWebUiSidebarLocate {
         |    return null;
         |  }
         |
-        |  // React fiber 里读"该分组的当前会话是否是它" (dsh 内部事实; 取不到返回 false)
+        |  // React fiber 里读 dsh 内部事实 (会话/分组事实都挂在 props 上; 取不到返回 null)
         |  function fiberOf(el) {
         |    for (var k in el) if (k.indexOf("__reactFiber${'$'}") === 0) return el[k];
         |    return null;
         |  }
-        |  function groupContainsCurrent(rowEl) {
-        |    for (var f = fiberOf(rowEl), depth = 0; f && depth < 10; f = f.return, depth++) {
+        |  function propOf(el, key) {
+        |    for (var f = fiberOf(el), depth = 0; f && depth < 10; f = f.return, depth++) {
         |      var p = f.memoizedProps;
-        |      if (p && p.group && p.group.containsCurrent === true) return true;
+        |      if (p && p[key] !== undefined && p[key] !== null) return p[key];
         |    }
-        |    return false;
+        |    return null;
+        |  }
+        |  function groupContainsCurrent(rowEl) {
+        |    var g = propOf(rowEl, "group");
+        |    return !!(g && g.containsCurrent === true);
+        |  }
+        |
+        |  // ---- 落地纠正: 页面落在别的项目上时切回本项目工作空间 ----
+        |
+        |  // 页面当前会话 id: 优先读会话行上的 currentId (页面真实状态), 读不到退回持久化选择
+        |  function pageCurrentSessionId(list) {
+        |    if (list) {
+        |      var rows = qa('div[role="treeitem"]', list);
+        |      for (var i = 0; i < rows.length; i++) {
+        |        var cur = propOf(rows[i], "currentId");
+        |        if (typeof cur === "string" && cur !== "") return cur;
+        |      }
+        |    }
+        |    try {
+        |      var o = JSON.parse(localStorage.getItem("dsh.sessions.current") || "null");
+        |      if (o && typeof o.sessionId === "string" && o.sessionId !== "") return o.sessionId;
+        |    } catch (e) {}
+        |    return null;
+        |  }
+        |
+        |  // 某个会话 id 对应的会话行 (只找已渲染出来的行)
+        |  function rowOfSession(list, sessionId) {
+        |    var rows = qa('div[role="treeitem"]', list);
+        |    for (var i = 0; i < rows.length; i++) {
+        |      var node = propOf(rows[i], "node");
+        |      if (node && node.id === sessionId) return rows[i];
+        |    }
+        |    return null;
+        |  }
+        |
+        |  // 钉住落地会话 + 刷新一次 (目标会话行没渲染出来时的兜底; 有防循环保护)
+        |  function pinLandingAndReload() {
+        |    try {
+        |      localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: LANDING }));
+        |    } catch (e) {
+        |      return false;
+        |    }
+        |    try {
+        |      var last = Number(sessionStorage.getItem(RELOAD_GUARD_KEY) || 0);
+        |      if (Date.now() - last < RELOAD_GUARD_MS) return false; // 刚纠正过: 不再反复刷新
+        |      sessionStorage.setItem(RELOAD_GUARD_KEY, String(Date.now()));
+        |    } catch (e) {}
+        |    try { location.reload(); } catch (e) {}
+        |    return true;
+        |  }
+        |
+        |  function ensureLanding(list) {
+        |    if (landingDone || userTouched) return;
+        |    // 页面刚加载完的一小段内先观察, 避免读到"还没切过去"的中间状态
+        |    if (Date.now() - landingStartedAt < LANDING_MIN_WAIT_MS) return;
+        |    var cur = pageCurrentSessionId(list);
+        |    if (cur !== null && IDS.indexOf(cur) !== -1) { landingDone = true; return; }
+        |    if (cur !== null && list) {
+        |      var row = rowOfSession(list, LANDING);
+        |      if (row) { landingDone = true; row.click(); return; } // 直接切回本项目会话 (无刷新)
+        |    }
+        |    // 目标会话行没渲染出来 (侧边栏折叠 / 分组折叠 / 展开更多): 超时后钉住落地会话刷新一次
+        |    if (Date.now() - landingStartedAt >= LANDING_MIN_WAIT_MS + LANDING_GIVE_UP_MS) {
+        |      landingDone = true;
+        |      pinLandingAndReload();
+        |    }
         |  }
         |
         |  // 当前会话所在的分组 (当前会话行没渲染出来时也能定位到分组)
@@ -206,6 +302,8 @@ object DshWebUiSidebarLocate {
         |  var lastSection = null;
         |
         |  function tick() {
+        |    // 落地纠正优先: 即使侧边栏列表没打开 (折叠成 rail) 也要核对当前会话
+        |    ensureLanding(sessionList());
         |    var list = sessionList();
         |    if (!list || panelActive(list)) {
         |      wasOpen = false;
@@ -252,7 +350,11 @@ object DshWebUiSidebarLocate {
         |  document.addEventListener("visibilitychange", function () {
         |    if (document.visibilityState === "visible") { wasOpen = false; schedule(DEBOUNCE_MS); }
         |  });
+        |  // 用户自己动过手 (真鼠标/键盘) 就不再自动纠正落地: 免得和"用户主动切到别的项目"打架
+        |  document.addEventListener("pointerdown", function () { userTouched = true; }, true);
+        |  document.addEventListener("keydown", function () { userTouched = true; }, true);
         |  tick();
         |})();
-    """.trimMargin()
+        """.trimMargin()
+    }
 }

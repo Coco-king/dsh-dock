@@ -94,12 +94,47 @@ object DshWorkspaceApi {
 
     /** 工作空间同步结果: workspaceId + 该工作空间当前的 sessionIds (供调用方判断持久化会话归属)。
      * bumped = 本次同步让"最近工作空间"切换到了本项目 (新建工作空间 / 提升既有空间的新鲜度):
-     * 调用方若在同步前已加载页面, 页面选中的还是旧的最近工作空间, 需要补刷一次 */
+     * 调用方若在同步前已加载页面, 页面选中的还是旧的最近工作空间, 需要补刷一次。
+     * landingSessionId = 本项目工作空间里"应当落地的会话" (见 [pickLandingSession]):
+     * 页面按它选中会话就不再依赖 dsh 那份全局的"最近工作空间" */
     data class WorkspaceSyncResult(
         val workspaceId: String,
         val sessionIds: List<String>,
         val bumped: Boolean = false,
+        val landingSessionId: String? = null,
     )
+
+    /**
+     * 选一个"落地会话": 页面加载后应当直接打开的会话。
+     *
+     * 为什么需要它: dsh 页面加载时若没有可恢复的会话, 就按**全局的"最近工作空间"**选
+     * (各工作空间里最新会话的 updatedAt 最大者)。多窗口共用一个 dsh 实例时这份状态是共享的,
+     * 别的窗口同步工作空间、甚至只是在别的项目里聊天, 都会把它改掉 —— 于是本窗口的页面
+     * 会落到别的项目上。把本项目工作空间里的会话钉进页面, 落地就不再受这份共享状态影响。
+     *
+     * 只取**非空白**会话: 空白会话会被归档 (见 [archiveBlankSessions]), 而 dsh 客户端会把
+     * "当前会话已归档"的清掉并退回"最近工作空间"选择, 钉了也白钉; 没有可用会话时返回 null
+     * (退回 dsh 原逻辑)。
+     */
+    private fun pickLandingSession(sessionItems: JsonArray?, workspaceSessionIds: List<String>): String? {
+        if (sessionItems == null || workspaceSessionIds.isEmpty()) return null
+        val own = workspaceSessionIds.toHashSet()
+        var best: String? = null
+        var bestAt = Long.MIN_VALUE
+        for (el in sessionItems) {
+            if (!el.isJsonObject) continue
+            val o = el.asJsonObject
+            val sid = o.get("sessionId")?.asString ?: continue
+            if (sid !in own) continue
+            if (o.get("blank")?.asBoolean == true) continue
+            val ts = o.get("updatedAt")?.asLong ?: continue
+            if (ts > bestAt) {
+                bestAt = ts
+                best = sid
+            }
+        }
+        return best
+    }
 
     /**
      * 确保项目工作空间存在且为"最近", 返回同步结果; 失败返回 null (调用方按现状继续)。
@@ -166,7 +201,7 @@ object DshWorkspaceApi {
         // 空白会话卫生: 归档项目工作空间里所有遗留空白会话
         // (复用上面 session.list 的结果, 省一次 RPC; 新建的工作空间没有会话, 无需清理)
         archiveBlankSessions(port, sessionIds, sessionItems, deadline)
-        return WorkspaceSyncResult(workspaceId, sessionIds, bumped)
+        return WorkspaceSyncResult(workspaceId, sessionIds, bumped, pickLandingSession(sessionItems, sessionIds))
     }
 
     /** 归档项目工作空间里的空白会话 (空会话无内容, 归档只是从侧边栏隐藏); 会话列表由调用方传入复用 */
