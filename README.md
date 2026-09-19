@@ -232,6 +232,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **dsh 编辑后自动刷新**：WSL 模式（或其他外部进程）写文件时，Windows 侧的文件变更通知
   （IDEA 原生文件监听依赖它）经常不触发，导致 IDEA 一直显示旧代码。插件订阅 dsh 会话事件：
   新版 dsh（0.1.2+）走 **session/follow 实时监听通道**（remote.mux WebSocket 长连接，事件级即时推送），
+  并且**只订阅本项目工作空间里的活跃会话**（dsh 为每条订阅都要加载并常驻保留该会话的日志，
+  历史会话成百上千时全量订阅会把 dsh 拖慢、连累界面加载），
   旧版（0.1.0-rc.8+）用 events.mux 事件流。在 `tool/call` 事件中登记文件写入类工具
   （str_replace_editor / edit / write 等）的调用与文件路径，`tool/result` 事件确认工具**成功**
   （非错误）后把路径换算回 Windows 侧（`/mnt/c/...` -> `C:/...`），定向刷新该文件的 VFS 并

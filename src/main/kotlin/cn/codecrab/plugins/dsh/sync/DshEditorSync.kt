@@ -194,10 +194,25 @@ class DshEditorSync(
         return null
     }
 
-    /** 启动 follow 实时流 (内部自带断线重连与会话校准) */
+    /**
+     * 启动 follow 实时流 (内部自带断线重连与会话校准)。
+     * 只跟随**本项目工作空间里的活跃会话** (见 [DshSessionFollow]): 宿主为每个 follow 流都要
+     * 加载并常驻保留该会话的日志, 历史会话成百上千, 全量开流会把宿主压满 —— 那正是
+     * "第一次打开内置浏览器后会话列表要等半分钟"的原因。
+     */
     private fun startFollow() {
         if (follow != null) return
-        follow = DshSessionFollow(port, ::handleFollowEvent)
+        val workspacePath = project.basePath?.let { DshReference.dshPathFromString(it, launchMode) }
+        follow = DshSessionFollow(
+            port = port,
+            workspacePath = workspacePath,
+            onFollowSetChanged = { sessions ->
+                if (sessions.isNotEmpty()) {
+                    onLog(DshBundle.message("sync.log.followActive", sessions.size.toString()))
+                }
+            },
+            onSessionEvent = ::handleFollowEvent,
+        )
         follow!!.start()
         onLog(DshBundle.message("sync.log.followMode"))
     }

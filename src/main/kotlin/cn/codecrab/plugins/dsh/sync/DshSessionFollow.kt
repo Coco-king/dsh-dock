@@ -25,14 +25,31 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 本类一次连接管多个流 (每个会话一个 follow 流):
  *  - 开场 snapshot 只向调用方报告基线 cursor (event==null), 不处理历史 records (防回放);
  *  - 之后每条 `event` 按 (sessionId, seq, event) 回调, seq 过滤与 VFS 刷新由调用方负责;
- *  - 校准线程每 30s 用 session.list 对齐会话集合: 新会话开流, 消失的会话发 cancel;
+ *  - 校准线程定期用 session.list 对齐"要跟随的会话"集合: 新出现的开流, 离开的发 cancel;
  *  - 断线自动退避重连 (每次重连都是新快照, 场景内事件 gap-free)。
  *
- * 线程模型: 两个 daemon 线程 —— 读帧循环 (阻塞收帧 + 退避重连) 与 30s 校准线程;
+ * **只跟随"当前项目工作空间里的活跃会话"** (running、最近 [recentlyUpdatedMs] 内更新过,
+ * 或该工作空间里最近更新的那一个):
+ * 宿主为每个 follow 流都要**加载并常驻保留**该会话的日志 (见 dsh 的 history.follow: sourceFor +
+ * retain/promote), 历史会话动辄成百上千, 如果每个都开流, 面板一创建就会把宿主压满 ——
+ * 表现就是"第一次打开内置浏览器后, dsh 会话列表要等半分钟才出来"(工作空间列表是另一个便宜的流,
+ * 所以先出来)。文件同步本来就只关心本项目里正在干活的会话, 过滤后通常只剩个位数。
+ * 子会话 (subagent) 不跟随: dsh 要求用"父地址 + 子会话"的形式投递, 用会话地址开流会被
+ * 拒绝 (session/agent-busy) 并反复重试。
+ *
+ * 线程模型: 两个 daemon 线程 —— 读帧循环 (阻塞收帧 + 退避重连) 与校准线程;
  * 回调在对应线程执行, 解析与入队须轻量 (VFS 刷新由调用方保证线程安全)。
  */
 class DshSessionFollow(
     private val port: Int,
+    /** 只跟随这个工作空间 (dsh 侧路径) 的会话; null = 不限工作空间 */
+    private val workspacePath: String? = null,
+    /** 除 running 外, 最近这么久内更新过的会话也跟随 (覆盖"刚发消息/刚结束"的窗口) */
+    private val recentlyUpdatedMs: Long = DEFAULT_RECENT_MS,
+    /** 校准间隔 (session.list 很便宜; 短一点能让"刚开始干活的会话"更快被跟上) */
+    private val calibrateIntervalMs: Long = DEFAULT_CALIBRATE_MS,
+    /** 跟随集合变化时回调 (供日志说明当前跟随了几个会话) */
+    private val onFollowSetChanged: ((Set<String>) -> Unit)? = null,
     /** 事件回调: event == null 表示开场快照 (仅建立基线); 否则为一条会话事件 */
     private val onSessionEvent: (sessionId: String, event: JsonObject?) -> Unit,
 ) {
@@ -199,7 +216,7 @@ class DshSessionFollow(
     private fun calibrateLoop() {
         while (running.get()) {
             try {
-                Thread.sleep(CALIBRATE_INTERVAL_MS)
+                Thread.sleep(calibrateIntervalMs)
             } catch (_: InterruptedException) {
                 return
             }
@@ -208,20 +225,47 @@ class DshSessionFollow(
         }
     }
 
-    /** 拉一次会话列表做一次校准 (连接建立前也调用, 让首轮开流不等待) */
+    /**
+     * 拉一次会话列表做一次校准 (连接建立前也调用, 让首轮开流不等待)。
+     * 只收"本项目工作空间里活跃"的会话, 见类注释。
+     */
     private fun refreshNow(): Set<String> {
-        val s = mutableSetOf<String>()
+        val wanted = mutableSetOf<String>()
         try {
-            val list = DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 4000) ?: return s
-            val items = list.getAsJsonArray("items") ?: return s
-            for (el in items) {
-                val sid = el.asJsonObject?.get("sessionId")?.asString ?: continue
-                s.add(sid)
+            val list = DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 4000)
+            val items = list?.getAsJsonArray("items")
+            if (items != null) {
+                val now = System.currentTimeMillis()
+                val expectedPath = workspacePath?.replace('\\', '/')
+                var newestId: String? = null
+                var newestAt = Long.MIN_VALUE
+                for (el in items) {
+                    if (!el.isJsonObject) continue
+                    val o = el.asJsonObject
+                    val sid = o.get("sessionId")?.asString ?: continue
+                    // 子会话 (subagent) 不跟随: dsh 只接受"父地址 + 子会话"的投递形式
+                    if (o.get("parentSessionId") != null || o.get("origin")?.asString == "subagent") continue
+                    if (expectedPath != null) {
+                        val cwd = o.get("cwd")?.asString ?: continue
+                        if (cwd.replace('\\', '/') != expectedPath) continue
+                    }
+                    val updatedAt = o.get("updatedAt")?.asLong ?: 0L
+                    if (updatedAt > newestAt) {
+                        newestAt = updatedAt
+                        newestId = sid
+                    }
+                    val running = o.get("running")?.asBoolean == true
+                    if (!running && now - updatedAt > recentlyUpdatedMs) continue
+                    wanted.add(sid)
+                }
+                // 本项目最近更新的那个会话始终跟随: 用户最可能继续用它, 这样"发消息"不用等校准
+                newestId?.let { wanted.add(it) }
             }
         } catch (_: Throwable) {
         }
-        desiredSessions = s
-        return s
+        if (wanted != desiredSessions) onFollowSetChanged?.invoke(wanted)
+        desiredSessions = wanted
+        return wanted
     }
 
     private fun refresh() {
@@ -283,6 +327,10 @@ class DshSessionFollow(
     private fun jsonEscape(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
 
     companion object {
-        private const val CALIBRATE_INTERVAL_MS = 30_000L
+        /** 默认校准间隔: 10s (session.list 便宜; 刚发起的对话能较快被跟上) */
+        private const val DEFAULT_CALIBRATE_MS = 10_000L
+
+        /** 默认"最近更新"窗口: 2 分钟 (覆盖刚结束的对话, 文件写入结果可能还在路上) */
+        private const val DEFAULT_RECENT_MS = 120_000L
     }
 }
