@@ -119,36 +119,6 @@ object DshWebUiInject {
     }
 
     /**
-     * 清除"不属于当前项目工作空间"的持久化会话选择 (页面加载前调用)。
-     * dsh WebUI 会把"上次打开的会话"持久化到浏览器 localStorage (dsh.sessions.current),
-     * 页面加载时会恢复它, 从而跳过工作空间的初始选中逻辑, 导致页面停留在旧项目。
-     * 持久化的会话不属于给定工作空间时才删, 属于 (用户本来就在当前项目里) 则保留。
-     * [sessionIds] 为 null (尚未同步/同步失败) 时不动 localStorage, 按 dsh 原行为。
-     */
-    fun clearPersistedSessionIfForeign(browser: CefBrowser, sessionIds: List<String>?, onLog: (String) -> Unit) {
-        if (sessionIds == null) return
-        val idsJs = sessionIds.joinToString(prefix = "[", postfix = "]", separator = ",") { jsString(it) }
-        val script = """
-            |(function () {
-            |  try {
-            |    var raw = localStorage.getItem("dsh.sessions.current");
-            |    if (raw) {
-            |      var o = JSON.parse(raw);
-            |      if (o && o.sessionId && $idsJs.indexOf(o.sessionId) === -1) {
-            |        localStorage.removeItem("dsh.sessions.current");
-            |      }
-            |    }
-            |  } catch (err) {}
-            |})();
-        """.trimMargin()
-        try {
-            browser.executeJavaScript(script, "dsh://ide-workspace-clear.js", 0)
-        } catch (t: Throwable) {
-            onLog(DshBundle.message("log.clearPersistFailed", t.message ?: "null"))
-        }
-    }
-
-    /**
      * IDE 界面语言子标签 (小写, 如 "en" / "zh")。
      * 用平台解析 bundle 的 locale (DynamicBundle.getLocale) —— 这才是真正的 IDE 界面语言;
      * `user.language` 系统属性只是 JVM 默认语言 (英文 IDE + 中文系统时仍是 zh), 不能用。

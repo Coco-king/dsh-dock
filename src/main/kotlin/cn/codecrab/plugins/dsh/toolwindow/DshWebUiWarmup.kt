@@ -70,6 +70,10 @@ object DshWebUiWarmup {
         val sessionIds: List<String>?,
         /** 同步得到的"落地会话": 页面应打开的会话 (见 DshWorkspaceApi.WorkspaceSyncResult) */
         val landingSessionId: String?,
+        /** 同步得到的本项目工作空间 id (页面落到别处时按它切回本项目) */
+        val workspaceId: String?,
+        /** 本项目工作空间里是否有非空白会话 (没有时页面脚本才允许"新建会话"切回) */
+        val hasContentSession: Boolean,
         private val pageLoadedFlag: AtomicBoolean,
         /** 页面→IDE 的 JS 通道 (「点击文件路径在 IDE 中打开」用; 必须在浏览器创建前建立, 只能随浏览器一起移交) */
         val fileOpenChannel: DshWebUiFileOpen.Channel?,
@@ -280,6 +284,8 @@ object DshWebUiWarmup {
                 val dshPath = project.basePath?.let { DshReference.dshPathFromString(it, settings.launchMode) }
                 var sessionIds: List<String>? = null
                 var landingSessionId: String? = null
+                var workspaceId: String? = null
+                var hasContentSession = true
                 var syncedPath: String? = null
                 if (dshPath != null) {
                     var result: DshWorkspaceApi.WorkspaceSyncResult? = null
@@ -297,6 +303,8 @@ object DshWebUiWarmup {
                     if (result != null) {
                         sessionIds = result.sessionIds
                         landingSessionId = result.landingSessionId
+                        workspaceId = result.workspaceId
+                        hasContentSession = result.hasContentSession
                         syncedPath = dshPath
                         log(DshBundle.message("log.workspaceReady", dshPath))
                     } else {
@@ -309,7 +317,8 @@ object DshWebUiWarmup {
                 }
                 // 3) EDT 创建浏览器 (Swing 组件安全), 挂预热注入 handler 后加载页面
                 val warmed = createBrowserAndLoad(
-                    project, slot, settings, port, syncedPath, sessionIds, landingSessionId, label,
+                    project, slot, settings, port, syncedPath, sessionIds, landingSessionId, workspaceId,
+                    hasContentSession, label,
                 )
                 // 4) 等这个页面加载完成并稳定后再放行下一个窗口的预热
                 if (warmed != null) awaitPageReady(warmed, project)
@@ -337,6 +346,8 @@ object DshWebUiWarmup {
         syncedPath: String?,
         sessionIds: List<String>?,
         landingSessionId: String?,
+        workspaceId: String?,
+        hasContentSession: Boolean,
         label: String,
     ): Warmed? {
         val created = java.util.concurrent.atomic.AtomicReference<Warmed?>(null)
@@ -357,7 +368,7 @@ object DshWebUiWarmup {
                         if (frame.isMain) {
                             pageLoadedFlag.set(false)
                             DshWebUiInject.injectUiThemeLocaleOverride(browser, settings) { log(it) }
-                            DshWebUiInject.clearPersistedSessionIfForeign(browser, sessionIds) { log(it) }
+                            DshWebUiInject.pinSessionSelection(browser, landingSessionId, sessionIds) { log(it) }
                         }
                     }
 
@@ -373,8 +384,8 @@ object DshWebUiWarmup {
                     }
                 }
                 val w = Warmed(
-                    project, jbClient, b, handler, port, syncedPath, sessionIds, landingSessionId,
-                    pageLoadedFlag, fileOpenChannel,
+                    project, jbClient, b, handler, port, syncedPath, sessionIds, landingSessionId, workspaceId,
+                    hasContentSession, pageLoadedFlag, fileOpenChannel,
                 )
                 jbClient.addLoadHandler(handler, b.cefBrowser)
                 // 先把页面加载起来再发布预热结果: 面板一旦取走就由它接管 (可能不再发起加载),

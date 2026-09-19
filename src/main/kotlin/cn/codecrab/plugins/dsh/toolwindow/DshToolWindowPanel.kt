@@ -122,6 +122,14 @@ class DshToolWindowPanel(
     @Volatile
     private var syncLandingSessionId: String? = null
 
+    /** 最近一次同步得到的本项目工作空间 id (页面落到别处时按它找到本项目分组切回) */
+    @Volatile
+    private var syncWorkspaceId: String? = null
+
+    /** 本项目工作空间里是否有非空白会话 (没有时页面脚本才允许"新建会话"切回) */
+    @Volatile
+    private var syncHasContentSession: Boolean = true
+
     /**
      * 本次工作空间同步是否失败。dsh API 偶尔在端口就绪后仍有一小段未就绪窗口,
      * 同步失败时页面仍会加载, 但工作空间不会切到当前项目 (手动刷新可恢复)。
@@ -448,6 +456,8 @@ class DshToolWindowPanel(
         fileOpenChannel = warmed.fileOpenChannel
         syncSessionIds = warmed.sessionIds
         syncLandingSessionId = warmed.landingSessionId
+        syncWorkspaceId = warmed.workspaceId
+        syncHasContentSession = warmed.hasContentSession
         lastSyncedPath = warmed.syncedDshPath
         // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
         if (!DshDisposer.register(parentDisposable, b)) {
@@ -537,8 +547,8 @@ class DshToolWindowPanel(
             if (frame.isMain) {
                 pageLoaded = false
                 DshWebUiInject.injectUiThemeLocaleOverride(browser, settings, ::appendLog)
-                // 在应用脚本执行前清除"不属于当前项目"的持久化会话选择
-                DshWebUiInject.clearPersistedSessionIfForeign(browser, syncSessionIds, ::appendLog)
+                // 在应用脚本执行前把"落地会话"钉进页面持久化选择 (不属于本项目时才写)
+                DshWebUiInject.pinSessionSelection(browser, syncLandingSessionId, syncSessionIds, ::appendLog)
             }
         }
 
@@ -567,7 +577,9 @@ class DshToolWindowPanel(
     private fun installPageScripts() {
         val b = browser ?: return
         fileOpenChannel?.install(b, project)
-        DshWebUiSidebarLocate.install(b, syncLandingSessionId, syncSessionIds, ::appendLog)
+        DshWebUiSidebarLocate.install(
+            b, syncLandingSessionId, syncSessionIds, syncWorkspaceId, syncHasContentSession, ::appendLog,
+        )
         DshJcefCookies.adoptAuthCookieAsync(settings.currentPort()) {
             appendLog(DshBundle.message("log.authCookieAdopted"))
             SwingUtilities.invokeLater {
@@ -859,6 +871,8 @@ class DshToolWindowPanel(
                     // 记录当前项目的 sessionIds 与落地会话, 供 onLoadStart / 页面脚本把页面固定在本项目
                     syncSessionIds = result.sessionIds
                     syncLandingSessionId = result.landingSessionId
+                    syncWorkspaceId = result.workspaceId
+                    syncHasContentSession = result.hasContentSession
                     workspaceSyncFailed = false
                     syncAutoReloaded = false
                     // 记录本面板最近一次成功同步的项目路径 (供窗口激活恢复 [checkActivationResync] 判断)

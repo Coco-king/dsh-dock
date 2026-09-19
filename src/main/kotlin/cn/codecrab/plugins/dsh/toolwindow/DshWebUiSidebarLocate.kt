@@ -37,16 +37,22 @@ object DshWebUiSidebarLocate {
      * @param landingSessionId 本项目工作空间的"落地会话" (见 DshWorkspaceApi.pickLandingSession);
      *   页面落在别的项目上时用它切回本项目, null 时不做落地纠正
      * @param workspaceSessionIds 本项目工作空间当前的会话 id 集合, 用于判断页面是否已在本项目上
+     * @param workspaceId 本项目工作空间的 dsh workspaceId: 落地会话还没渲染出来时, 靠它找到
+     *   本项目的分组并点"新建会话"切过去
+     * @param hasContentSession 本项目工作空间里是否有非空白会话: 有真实会话时不允许点"新建会话"
+     *   (那只用于项目还没有任何会话的场景, 免得误开新会话)
      */
     fun install(
         browser: JBCefBrowser,
         landingSessionId: String?,
         workspaceSessionIds: List<String>?,
+        workspaceId: String?,
+        hasContentSession: Boolean,
         onLog: (String) -> Unit,
     ) {
         try {
             browser.cefBrowser.executeJavaScript(
-                locateScript(landingSessionId, workspaceSessionIds),
+                locateScript(landingSessionId, workspaceSessionIds, workspaceId, hasContentSession),
                 "dsh://ide-sidebar-locate.js",
                 0,
             )
@@ -58,8 +64,15 @@ object DshWebUiSidebarLocate {
     }
 
     /** 注入脚本 (逐行 trimMargin; JS 里不使用 `$`, 避免与 Kotlin 模板冲突) */
-    private fun locateScript(landingSessionId: String?, workspaceSessionIds: List<String>?): String {
+    private fun locateScript(
+        landingSessionId: String?,
+        workspaceSessionIds: List<String>?,
+        workspaceId: String?,
+        hasContentSession: Boolean,
+    ): String {
         val landingJs = if (landingSessionId.isNullOrBlank()) "null" else DshWebUiInject.jsString(landingSessionId)
+        val workspaceJs = if (workspaceId.isNullOrBlank()) "null" else DshWebUiInject.jsString(workspaceId)
+        val hasContentJs = if (hasContentSession) "true" else "false"
         val idsJs = (workspaceSessionIds ?: emptyList())
             .joinToString(prefix = "[", postfix = "]", separator = ",") { DshWebUiInject.jsString(it) }
         return """
@@ -74,12 +87,15 @@ object DshWebUiSidebarLocate {
         |  // 落地纠正用: 本项目工作空间的落地会话 + 该工作空间当前的会话 id 集合
         |  var LANDING = $landingJs;
         |  var IDS = $idsJs;
+        |  var WORKSPACE_ID = $workspaceJs;
+        |  var HAS_CONTENT = $hasContentJs;
         |  var LANDING_MIN_WAIT_MS = 1500;
         |  var LANDING_GIVE_UP_MS = 8000;
         |  var RELOAD_GUARD_KEY = "dsh.ide.landingReloadAt";
         |  var RELOAD_GUARD_MS = 30000;
         |  var landingStartedAt = Date.now();
-        |  var landingDone = LANDING === null || IDS.length === 0;
+        |  // 有会话 id 或有 workspaceId 就有办法把页面切回本项目; 两者都没有才不做纠正
+        |  var landingDone = IDS.length === 0 && WORKSPACE_ID === null;
         |  var userTouched = false;
         |
         |  // 高亮样式: 复用 dsh 自己的主题变量 (明暗主题都自然)。标记用自定义 data 属性而不是加 class ——
@@ -216,20 +232,82 @@ object DshWebUiSidebarLocate {
         |    return true;
         |  }
         |
+        |  // 本项目工作空间里任意一个会话行 (落地会话没渲染出来时的退路)
+        |  function rowOfAnyOurSession(list) {
+        |    if (!list || IDS.length === 0) return null;
+        |    var rows = qa('div[role="treeitem"]', list);
+        |    for (var i = 0; i < rows.length; i++) {
+        |      var node = propOf(rows[i], "node");
+        |      if (node && IDS.indexOf(node.id) !== -1) return rows[i];
+        |    }
+        |    return null;
+        |  }
+        |
+        |  // 本项目工作空间分组的"新建会话"按钮 (按 dsh 内部 workspaceId 认分组):
+        |  // 项目一个会话都没有时, 点它会新建/复用本项目会话并切过去, 页面就落到本项目了
+        |  function newSessionButtonOfOurGroup(list) {
+        |    if (!list || WORKSPACE_ID === null) return null;
+        |    var sections = qa('div[class*="_groupSection"]', list);
+        |    for (var i = 0; i < sections.length; i++) {
+        |      var row = q1('div[class*="_projectRow"]', sections[i]);
+        |      if (!row) continue;
+        |      var g = propOf(row, "group");
+        |      if (!g || g.workspaceId !== WORKSPACE_ID) continue;
+        |      var actions = q1('[class*="_rowActions"]', row);
+        |      var buttons = (actions || row).querySelectorAll("button");
+        |      // 行内最后一个按钮是"新建会话" (前面是重命名/删除的菜单入口)
+        |      if (buttons.length > 0) return buttons[buttons.length - 1];
+        |    }
+        |    return null;
+        |  }
+        |
+        |  // 本项目工作空间的分组 (按 dsh 内部 workspaceId 认)
+        |  function ourGroupSection(list) {
+        |    if (!list || WORKSPACE_ID === null) return null;
+        |    var sections = qa('div[class*="_groupSection"]', list);
+        |    for (var i = 0; i < sections.length; i++) {
+        |      var row = q1('div[class*="_projectRow"]', sections[i]);
+        |      if (!row) continue;
+        |      var g = propOf(row, "group");
+        |      if (g && g.workspaceId === WORKSPACE_ID) return sections[i];
+        |    }
+        |    return null;
+        |  }
+        |
+        |  // 展开本项目分组 / 组内"展开更多" (落地会话行没渲染出来时先展开, 好点开正确的会话)
+        |  function expandOurGroup(section) {
+        |    if (!section) return false;
+        |    var changed = false;
+        |    var row = q1('div[class*="_projectRow"]', section);
+        |    if (row && row.getAttribute("aria-expanded") === "false") { row.click(); changed = true; }
+        |    var more = q1('button[class*="_sessionOverflowButton"]', section);
+        |    if (more && more.getAttribute("aria-expanded") === "false") { more.click(); changed = true; }
+        |    return changed;
+        |  }
+        |
         |  function ensureLanding(list) {
         |    if (landingDone || userTouched) return;
         |    // 页面刚加载完的一小段内先观察, 避免读到"还没切过去"的中间状态
         |    if (Date.now() - landingStartedAt < LANDING_MIN_WAIT_MS) return;
         |    var cur = pageCurrentSessionId(list);
         |    if (cur !== null && IDS.indexOf(cur) !== -1) { landingDone = true; return; }
-        |    if (cur !== null && list) {
-        |      var row = rowOfSession(list, LANDING);
-        |      if (row) { landingDone = true; row.click(); return; } // 直接切回本项目会话 (无刷新)
+        |    // 1) 本项目的会话行已渲染: 直接点开 (无刷新切回; 落地会话优先, 其次本项目任意会话)
+        |    var row = LANDING === null ? null : rowOfSession(list, LANDING);
+        |    if (!row && list) row = rowOfAnyOurSession(list);
+        |    if (row) { landingDone = true; row.click(); return; }
+        |    // 2) 本项目的分组还在: 先把折叠的分组/会话展开 (下个 tick 就能点开正确的会话)
+        |    var section = ourGroupSection(list);
+        |    if (expandOurGroup(section)) return;
+        |    // 3) 分组已展开但组内一个会话行都没有 (项目还没有任何会话): 点"新建会话"切过去 (无需刷新)
+        |    //    有真实会话的项目不走这条路, 免得误开新会话
+        |    if (section && !HAS_CONTENT) {
+        |      var btn = newSessionButtonOfOurGroup(list);
+        |      if (btn) { landingDone = true; btn.click(); return; }
         |    }
-        |    // 目标会话行没渲染出来 (侧边栏折叠 / 分组折叠 / 展开更多): 超时后钉住落地会话刷新一次
+        |    // 4) 都不行 (侧边栏整体折叠等): 确认页面确实在别的项目上时, 钉住落地会话刷新一次
         |    if (Date.now() - landingStartedAt >= LANDING_MIN_WAIT_MS + LANDING_GIVE_UP_MS) {
         |      landingDone = true;
-        |      pinLandingAndReload();
+        |      if (LANDING !== null && cur !== null) pinLandingAndReload();
         |    }
         |  }
         |

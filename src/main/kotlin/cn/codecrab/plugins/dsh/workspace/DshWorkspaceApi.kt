@@ -96,12 +96,15 @@ object DshWorkspaceApi {
      * bumped = 本次同步让"最近工作空间"切换到了本项目 (新建工作空间 / 提升既有空间的新鲜度):
      * 调用方若在同步前已加载页面, 页面选中的还是旧的最近工作空间, 需要补刷一次。
      * landingSessionId = 本项目工作空间里"应当落地的会话" (见 [pickLandingSession]):
-     * 页面按它选中会话就不再依赖 dsh 那份全局的"最近工作空间" */
+     * 页面按它选中会话就不再依赖 dsh 那份全局的"最近工作空间"。
+     * hasContentSession = 本项目工作空间里是否有非空白会话 (没有时页面脚本才允许"新建会话"切回,
+     * 免得在有真实会话的项目里误开新会话) */
     data class WorkspaceSyncResult(
         val workspaceId: String,
         val sessionIds: List<String>,
         val bumped: Boolean = false,
         val landingSessionId: String? = null,
+        val hasContentSession: Boolean = true,
     )
 
     /**
@@ -173,6 +176,7 @@ object DshWorkspaceApi {
         //    -> 用新建会话 bump: 新会话 updatedAt 最新, 在 session 级 recency 下项目必然成为最近 (自愈);
         //  - bump 也失败 -> 整次同步不确认, 返回 null 交给调用方重试。
         var bumped = false
+        var bumpSessionId: String? = null
         var sessionItems: JsonArray? = null
         val recent = computeRecentWorkspace(port, workspaceId, projectDshPath, deadline)
         when {
@@ -192,16 +196,73 @@ object DshWorkspaceApi {
                     return null
                 }
                 bumped = true
-                // 新会话立即可归档: 归档不影响"最近"计算 (session.list 含已归档会话),
-                // 但 connectWorkspace 复用时跳过已归档, 避免它成为被反复复用的旧空白
-                bump.value?.get("sessionId")?.asString?.let { archiveSession(port, it, deadline) }
+                // 这个新会话也可能就是"落地会话" (工作空间里没有别的会话时), 先不归档, 见下
+                bumpSessionId = bump.value?.get("sessionId")?.asString
                 sessionItems = recent?.second
             }
         }
-        // 空白会话卫生: 归档项目工作空间里所有遗留空白会话
-        // (复用上面 session.list 的结果, 省一次 RPC; 新建的工作空间没有会话, 无需清理)
-        archiveBlankSessions(port, sessionIds, sessionItems, deadline)
-        return WorkspaceSyncResult(workspaceId, sessionIds, bumped, pickLandingSession(sessionItems, sessionIds))
+        // 落地会话 (页面加载后应当打开的会话): 优先最近的非空白会话; 没有非空白会话时用空白会话
+        // (本次 bump 出来的, 或工作空间里已有的); 一个会话都没有就现建一个
+        val nonBlankLanding = pickLandingSession(sessionItems, sessionIds)
+        val landing = nonBlankLanding
+            ?: bumpSessionId
+            ?: pickBlankSession(sessionItems, sessionIds)
+        // 空白会话卫生: 只在"工作空间已有非空白会话"时清理空白会话 (复用上面 session.list 的结果)。
+        // 没有非空白会话时**不清理**: 那些空白会话正是页面落点, 而 dsh 客户端会把"当前会话已归档"的
+        // 选择清掉、退回按全局"最近工作空间"选 —— 落点失效就会落到别的项目上 (多窗口互串的根因之一);
+        // 也无法从 API 分辨哪一枚空白会话是当前会话, 清理有把当前会话归档掉的风险。
+        if (nonBlankLanding != null) {
+            archiveBlankSessions(port, sessionIds, sessionItems, deadline)
+        }
+        val finalLanding = landing ?: createLandingSession(port, workspaceId, deadline)
+        val allSessionIds = (sessionIds + listOfNotNull(bumpSessionId, finalLanding)).distinct()
+        return WorkspaceSyncResult(
+            workspaceId,
+            allSessionIds,
+            bumped,
+            finalLanding,
+            hasContentSession = nonBlankLanding != null,
+        )
+    }
+
+    /**
+     * 工作空间里一个会话都没有时 (项目从没聊过), 现建一个空白会话当落地会话:
+     * 没有落点的话页面会按 dsh 那份全局的"最近工作空间"选, 多窗口下就会落到别的项目上。
+     * dsh 的"新会话"会复用这个空白会话 (见 connectWorkspace), 不会越堆越多。
+     */
+    private fun createLandingSession(port: Int, workspaceId: String, deadline: Long): String? {
+        val created = rpcWithin(
+            port,
+            "session.create",
+            JsonObject().apply { addProperty("workspaceId", workspaceId) },
+            deadline,
+        )
+        if (created?.ok != true) {
+            LOG.warn("session.create (landing session) failed: ${created?.value}")
+            return null
+        }
+        return created.value?.get("sessionId")?.asString
+    }
+
+    /** 工作空间里最近的空白会话 (落地用: 非空白会话都没有时, 拿它当落点) */
+    private fun pickBlankSession(sessionItems: JsonArray?, workspaceSessionIds: List<String>): String? {
+        if (sessionItems == null || workspaceSessionIds.isEmpty()) return null
+        val own = workspaceSessionIds.toHashSet()
+        var best: String? = null
+        var bestAt = Long.MIN_VALUE
+        for (el in sessionItems) {
+            if (!el.isJsonObject) continue
+            val o = el.asJsonObject
+            val sid = o.get("sessionId")?.asString ?: continue
+            if (sid !in own) continue
+            if (o.get("blank")?.asBoolean != true) continue
+            val ts = o.get("updatedAt")?.asLong ?: continue
+            if (ts > bestAt) {
+                bestAt = ts
+                best = sid
+            }
+        }
+        return best
     }
 
     /** 归档项目工作空间里的空白会话 (空会话无内容, 归档只是从侧边栏隐藏); 会话列表由调用方传入复用 */
@@ -213,6 +274,7 @@ object DshWorkspaceApi {
     ) {
         if (workspaceSessionIds.isEmpty() || sessionItems == null) return
         for (el in sessionItems) {
+            if (!el.isJsonObject) continue
             val o = el.asJsonObject
             val sid = o.get("sessionId")?.asString ?: continue
             if (sid in workspaceSessionIds && o.get("blank")?.asBoolean == true) {
