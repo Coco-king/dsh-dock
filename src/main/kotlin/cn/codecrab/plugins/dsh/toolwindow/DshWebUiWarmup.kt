@@ -361,6 +361,9 @@ object DshWebUiWarmup {
                 // JS 通道必须在浏览器实体创建前建立 (见 DshWebUiFileOpen.createChannel);
                 // 拦截脚本由接管该页面的面板注入
                 val fileOpenChannel = DshWebUiFileOpen.createChannel(b, project, ::log)
+                // JS 通道建好后立刻强制创建浏览器实体: 窗口还没显示/没被激活时页面也要开始加载
+                // (JCEF 默认懒创建, 否则要等用户把窗口切到前台才加载, 侧边栏会一直空白)
+                DshJcefSupport.forceStart(b)
                 val handler = object : CefLoadHandlerAdapter() {
                     override fun onLoadStart(
                         browser: CefBrowser,
