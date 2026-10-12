@@ -125,13 +125,21 @@ class DshSettingsConfigurable : Configurable {
         y = fullWidth(y, TitledSeparator(DshBundle.message("settings.localeSeparator")))
         y = fullWidth(y, localePanel)
 
-        val hint = JBLabel(DshBundle.message("settings.hint"))
+        // 提示文字较长, 必须限制宽度并让 HTML 自动换行: 标签的"理想宽度"是整段文字一行放下的宽度,
+        // 不限宽会把整个设置页撑得很宽 (设置窗口变巨大)
+        val hint = JBLabel(htmlHint(DshBundle.message("settings.hint")))
         hint.foreground = JBColor.GRAY
         y = fullWidth(y, hint)
 
         reset()
         return panel
     }
+
+    /** 长提示包成定宽 HTML: 让它在设置页里自动换行, 不撑宽页面 (标签自身不会换行) */
+    private fun htmlHint(text: String): String =
+        "<html><div style='width:420px'>" +
+            text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") +
+            "</div></html>"
 
     /** 把一组单选按钮横向排在同一行 (比逐行堆叠更紧凑) */
     private fun radioPanel(vararg radios: JRadioButton): JPanel =

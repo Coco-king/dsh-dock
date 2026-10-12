@@ -63,31 +63,49 @@ object DshWorkspaceApi {
     /** 探测到的 RPC 风格 (按端口缓存; dsh 重启不换端口, 风格不变; 停止 dsh 时由 DshServer 清空) */
     private val styleCache = java.util.concurrent.ConcurrentHashMap<Int, RpcStyle>()
 
+
     /**
-     * 端口最近一次 /api 调用是否被认证拒绝 (HTTP 401)。
+     * 跨窗口的"工作空间结构变更"互斥锁 (应用级: 本 IDE 进程内所有窗口共用)。
      *
-     * 用途: 启动令牌只在本插件启动 dsh 时才能拿到 —— 若 dsh 是上次 IDE 会话或外部启动的、
-     * 仍在运行, 插件的 /api 调用一律 401, 工作空间同步注定失败。调用方据此不再"自动刷新
-     * 页面重试"(刷新也不会成功, 只会反复闪页面), 改为打日志提示用户。
-     * 任何一次成功的调用 (2xx) 都会清掉标记。
+     * 每个窗口一个 dsh 进程, 而 dsh 的工作空间注册表 (~/.dsh/storages/workspace.json) 是所有
+     * 进程共用的同一个文件, 写入方式是"整份覆盖、后写者赢" —— dsh 自身的假设是"一个进程一个写者",
+     * 多进程同时新建工作空间/会话/归档时会互相覆盖。插件侧把自家各窗口的变更类调用串行化,
+     * 避免两个窗口启动时同时写注册表丢改动; dsh 之外的进程 (其他 IDE 实例/用户手动启动的 dsh)
+     * 不受本锁约束, 那是 dsh 自身的设计边界。
+     *
+     * 只包住变更类 RPC (workspace.create / session.create / workspace.archiveSession),
+     * 读列表等不受影响; 拿不到锁时直接放行 —— 宁可退化为原有行为, 也不把工作空间同步卡死。
      */
-    private val authRejected = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+    private val mutationLock = java.util.concurrent.locks.ReentrantLock()
+
+    /** 等锁上限 (拿不到就直接执行: 变更 RPC 本身很短, 正常都能等到) */
+    private const val MUTATION_LOCK_WAIT_MS = 3000L
+
+    /** 变更类 RPC: 同一时刻只允许一个窗口写 dsh 的工作空间注册表 (见 [mutationLock]) */
+    private fun <T> withMutationLock(block: () -> T): T {
+        val locked = try {
+            mutationLock.tryLock(MUTATION_LOCK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (_: InterruptedException) {
+            false
+        }
+        try {
+            return block()
+        } finally {
+            if (locked) mutationLock.unlock()
+        }
+    }
+
+    /** 变更类 RPC (跨窗口串行) */
+    private fun mutatingRpcWithin(port: Int, method: String, payload: JsonObject, deadline: Long): RpcResult? =
+        withMutationLock { rpcWithin(port, method, payload, deadline) }
 
     /** 当前端口的 RPC 风格 (未探测过返回 null) */
     fun rpcStyle(port: Int): RpcStyle? = styleCache[port]
 
-    /**
-     * 该端口当前是否"认证不可用": 最近一次调用被 401 拒绝 **且现在没有任何可用认证 cookie**。
-     *
-     * 注意带 [DshWebAuth.hasCookie] 判断: 之后若从内嵌浏览器借到了认证 cookie (见 DshJcefCookies),
-     * 或 dsh 重新启动换到了新令牌, 就不能再按"认证不可用"处理 —— 那时重试是有意义的。
-     */
-    fun authRejected(port: Int): Boolean = authRejected[port] == true && !DshWebAuth.hasCookie(port)
 
     /** dsh 停止时清空探测缓存 (下次启动重新探测) */
     fun invalidateStyle(port: Int) {
         styleCache.remove(port)
-        authRejected.remove(port)
     }
 
     private class RpcResult(val ok: Boolean, val value: JsonObject?)
@@ -111,9 +129,9 @@ object DshWorkspaceApi {
      * 选一个"落地会话": 页面加载后应当直接打开的会话。
      *
      * 为什么需要它: dsh 页面加载时若没有可恢复的会话, 就按**全局的"最近工作空间"**选
-     * (各工作空间里最新会话的 updatedAt 最大者)。多窗口共用一个 dsh 实例时这份状态是共享的,
-     * 别的窗口同步工作空间、甚至只是在别的项目里聊天, 都会把它改掉 —— 于是本窗口的页面
-     * 会落到别的项目上。把本项目工作空间里的会话钉进页面, 落地就不再受这份共享状态影响。
+     * (各工作空间里最新会话的 updatedAt 最大者)。这份"最近"是按**所有工作空间**算出来的:
+     * 工作空间注册表在磁盘上 (各 dsh 进程共用同一份), 只要别的项目里聊过天它就会变成"最近",
+     * 于是本窗口的页面可能落到别的项目上。把本项目工作空间里的会话钉进页面, 落地就与它无关。
      *
      * 只取**非空白**会话: 空白会话会被归档 (见 [archiveBlankSessions]), 而 dsh 客户端会把
      * "当前会话已归档"的清掉并退回"最近工作空间"选择, 钉了也白钉; 没有可用会话时返回 null
@@ -161,7 +179,7 @@ object DshWorkspaceApi {
     ): WorkspaceSyncResult? {
         if (projectDshPath.isNullOrBlank()) return null
         val deadline = System.currentTimeMillis() + timeoutMs
-        val create = rpcWithin(
+        val create = mutatingRpcWithin(
             port,
             "workspace.create",
             JsonObject().apply { addProperty("path", projectDshPath) },
@@ -192,7 +210,7 @@ object DshWorkspaceApi {
                 sessionItems = recent.second
             }
             else -> {
-                val bump = rpcWithin(
+                val bump = mutatingRpcWithin(
                     port,
                     "session.create",
                     JsonObject().apply { addProperty("workspaceId", workspaceId) },
@@ -222,7 +240,7 @@ object DshWorkspaceApi {
         // 空白会话卫生: 只在"落地会话是非空白会话"时清理空白会话 (复用上面 session.list 的结果)。
         // 落地会话本身是空白会话时**不清理**: 它 (以及其它空白) 可能正是页面当前的落点, 而 dsh
         // 客户端会把"当前会话已归档"的选择清掉、退回按全局"最近工作空间"选 —— 落点失效就会落到
-        // 别的项目上 (多窗口互串的根因之一); 也无法从 API 分辨哪一枚空白会话是当前会话。
+        // 别的项目上; 也无法从 API 分辨哪一枚空白会话是当前会话。
         if (restoreLastSession && nonBlankLanding != null && landing == nonBlankLanding) {
             archiveBlankSessions(port, sessionIds, sessionItems, deadline)
         }
@@ -239,11 +257,11 @@ object DshWorkspaceApi {
 
     /**
      * 工作空间里一个会话都没有时 (项目从没聊过), 现建一个空白会话当落地会话:
-     * 没有落点的话页面会按 dsh 那份全局的"最近工作空间"选, 多窗口下就会落到别的项目上。
+     * 没有落点的话页面会按 dsh 那份全局的"最近工作空间"选, 就可能落到别的项目上。
      * dsh 的"新会话"会复用这个空白会话 (见 connectWorkspace), 不会越堆越多。
      */
     private fun createLandingSession(port: Int, workspaceId: String, deadline: Long): String? {
-        val created = rpcWithin(
+        val created = mutatingRpcWithin(
             port,
             "session.create",
             JsonObject().apply { addProperty("workspaceId", workspaceId) },
@@ -297,7 +315,7 @@ object DshWorkspaceApi {
 
     private fun archiveSession(port: Int, sessionId: String, deadline: Long) {
         if (System.currentTimeMillis() >= deadline) return
-        val r = rpcWithin(
+        val r = mutatingRpcWithin(
             port,
             "workspace.archiveSession",
             JsonObject().apply { addProperty("sessionId", sessionId) },
@@ -468,7 +486,7 @@ object DshWorkspaceApi {
         styleCache[port]?.let { return it }
         if (System.currentTimeMillis() >= deadline) return null
         val cookie = DshWebAuth.cookieHeader(port)
-            ?: (if (DshWebAuth.awaitToken(2000)) DshWebAuth.cookieHeader(port) else null)
+            ?: (if (DshWebAuth.awaitToken(port, 2000)) DshWebAuth.cookieHeader(port) else null)
         // 对象构造探测报文 (固定结构)
         val remoteBody = JsonObject().apply {
             addProperty("type", "client-request")
@@ -525,7 +543,7 @@ object DshWorkspaceApi {
      */
     private fun post(port: Int, method: String, body: String): String? {
         var cookie = DshWebAuth.cookieHeader(port)
-        if (cookie == null && DshWebAuth.awaitToken(2000)) {
+        if (cookie == null && DshWebAuth.awaitToken(port, 2000)) {
             cookie = DshWebAuth.cookieHeader(port)
         }
         var result = postOnce(port, method, body, cookie)
@@ -536,12 +554,6 @@ object DshWorkspaceApi {
                 LOG.warn("dsh api $method -> HTTP 401, re-authenticated and retrying")
                 result = postOnce(port, method, body, fresh)
             }
-        }
-        // 认证状态: 401 记标记 (调用方据此放弃无谓的重试/刷新), 成功则清标记
-        if (result?.status == 401) {
-            authRejected[port] = true
-        } else if (result != null && result.status in 200..299) {
-            authRejected.remove(port)
         }
         if (result == null || result.status !in 200..299) {
             LOG.warn("dsh api $method -> HTTP ${result?.status ?: "transport error"}")

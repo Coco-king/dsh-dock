@@ -49,7 +49,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class DshEditorSync(
     private val project: Project,
-    private val port: Int,
+    /**
+     * 本窗口 dsh 端口提供者: 每次连接时读取当前端口。
+     * 每个窗口一个 dsh 实例, 端口由实例分配 (设置变更/重建后可能变化), 因此不能在这里存死 ——
+     * 否则改了端口之后文件同步还在连旧端口, 静默失效。
+     */
+    private val portProvider: () -> Int,
     private val launchMode: String,
     private val onLog: (String) -> Unit,
 ) {
@@ -102,7 +107,7 @@ class DshEditorSync(
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
-        LOG.info("start editor sync for $port")
+        LOG.info("start editor sync for " + portProvider())
         // 重置上一周期的状态 (dsh 停止后再启动, start 会被再次调用)
         connectedLogged = false
         subscribedLogged = false
@@ -179,6 +184,7 @@ class DshEditorSync(
      * 旧版 dsh 首轮即返回 LEGACY; 新版等令牌就绪后返回 REMOTE; 超时仍未定按旧版处理。
      */
     private fun probeRemoteStyleWithRetry(): RpcStyle? {
+        val port = portProvider()
         var waited = 0L
         while (running.get() && !project.isDisposed) {
             val style = DshWorkspaceApi.rpcStyle(port) ?: run {
@@ -204,7 +210,7 @@ class DshEditorSync(
         if (follow != null) return
         val workspacePath = project.basePath?.let { DshReference.dshPathFromString(it, launchMode) }
         follow = DshSessionFollow(
-            port = port,
+            port = portProvider(),
             workspacePath = workspacePath,
             onFollowSetChanged = { sessions ->
                 if (sessions.isNotEmpty()) {
@@ -257,13 +263,15 @@ class DshEditorSync(
      * 几百毫秒随 dsh 输出到达) 再换取; 旧版 dsh (无认证) 返回 null, 按原样连接。
      */
     private fun authCookie(): String? {
+        val port = portProvider()
         DshWebAuth.cookieHeader(port)?.let { return it }
-        if (DshWebAuth.awaitToken(2000)) return DshWebAuth.cookieHeader(port)
+        if (DshWebAuth.awaitToken(port, 2000)) return DshWebAuth.cookieHeader(port)
         return null
     }
 
     /** 挂起线程直到新帧到达 */
     private fun trySseStream(): Boolean {
+        val port = portProvider()
         var conn: HttpURLConnection? = null
         return try {
             val url = URI("http://${DshWebAuth.authority(port)}/api/events.mux").toURL()
@@ -298,6 +306,7 @@ class DshEditorSync(
     }
 
     private fun tryWsStream(): Boolean {
+        val port = portProvider()
         val closed = CountDownLatch(1)
         val listener = object : WebSocket.Listener {
             /** 大帧会被拆分成多段 onText (last=false), 先累积再解析 */

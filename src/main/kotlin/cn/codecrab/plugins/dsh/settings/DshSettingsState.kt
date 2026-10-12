@@ -20,13 +20,14 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     /** 启动方式: "windows" = 直接在 Windows 启动 (默认); "wsl" = 在 WSL 中启动 */
     var launchMode: String = MODE_WINDOWS
 
-    /** WSL 模式: dsh web 监听端口 (默认 3080, 与官方 dsh web 默认端口一致) */
+    /** WSL 模式: 起始端口 (默认与官方 dsh web 端口一致); 多个 IDE 窗口同时打开时, 第一个窗口用它,
+     *  其他窗口自动顺延到下一个空闲端口 (每个窗口一个独立的 dsh 实例) */
     var wslPort: Int = WSL_DEFAULT_PORT
 
     /** WSL 模式: 追加到 `dsh web` 后的附加参数 */
     var wslExtraDshArgs: String = ""
 
-    /** Windows 模式: dsh web 监听端口 */
+    /** Windows 模式: 起始端口; 多个 IDE 窗口同时打开时, 第一个窗口用它, 其他窗口自动顺延 (见 DshServers) */
     var windowsPort: Int = WINDOWS_DEFAULT_PORT
 
     /** Windows 模式: 追加到 `dsh web` 后的附加参数 */
@@ -61,13 +62,13 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     var forceLocale: String = ""
 
 
-    /** 指定启动方式对应的端口 */
+    /** 指定启动方式的起始端口 (各窗口实例的分配基准, 见 DshServers.allocatePort) */
     fun portFor(mode: String): Int = if (mode == MODE_WSL) wslPort else windowsPort
 
     /** 指定启动方式对应的附加参数 */
     fun extraArgsFor(mode: String): String = if (mode == MODE_WSL) wslExtraDshArgs else windowsExtraDshArgs
 
-    /** 当前选中的启动方式对应的端口 */
+    /** 当前启动方式的起始端口 (各窗口实例的分配基准) */
     fun currentPort(): Int = portFor(launchMode)
 
     /** 当前选中的启动方式对应的附加参数 */

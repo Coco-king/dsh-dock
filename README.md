@@ -15,30 +15,29 @@ no terminal or separate browser needed.
    without leaving the IDE
 2. **Two launch modes (optional)**: Start in **WSL** or **directly in Windows**, with separately
    configurable ports and extra arguments for each mode
-3. **Auto-detects a running dsh**: If the port is already in use (e.g. you started dsh yourself),
-   it skips launching and opens the WebUI directly in the built-in browser — no duplicate processes;
-   note the latest dsh (0.1.2-rc.1+) requires a launch-token authentication, so when the plugin has no
-   token it borrows the auth cookie the built-in browser already holds and everything (workspace
-   following, language and file sync) keeps working; only when no cookie is available does the page
-   show the auth prompt — start (or restart) dsh from the plugin in that case
+3. **Always starts its own dsh**: a dsh already listening on the port (one you started yourself, or a
+   leftover from an earlier session) is **never reused** — the plugin shifts to the next free port and
+   starts its own instance, so every IDE window runs on its own dsh and stays independent
 4. **Workspace follows the project**: Uses the root path of the currently open project as the dsh workspace;
-   with multiple open windows it follows the **active window**, and every window's page is pinned to its own
-   project, so windows sharing one dsh never leak workspaces into each other; by default each open starts a
-   blank new session instead of the previous conversation (a setting restores the last session)
-5. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
+   by default each open starts a blank new session instead of the previous conversation (a setting restores
+   the last session)
+5. **One dsh per IDE window**: every project window starts its own dsh on its own port (taken from the
+   configured port and shifted up when it is already in use), so refreshing the WebUI, workspaces, sessions
+   and page state never leak between windows; closing a window stops the dsh that belongs to it
+6. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
    reference with one click, so the assistant can read the file when needed
-6. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
+7. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
    tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
    editors update to the new content immediately — no more stale code or reopening files
-7. **File paths open in the IDE**: Clicking a file path in the dsh WebUI opens it in the IDE
+8. **File paths open in the IDE**: Clicking a file path in the dsh WebUI opens it in the IDE
    editor — jumping to the line or the edited content when dsh knows it — instead of the dsh sidebar preview
-8. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar — and switching to another
+9. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar — and switching to another
    workspace or session afterwards — scrolls straight to the current session and highlights the workspace
    group it belongs to, so long session lists stay navigable
-9. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
+10. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
-10. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
-11. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
+11. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
+12. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
 
@@ -51,24 +50,23 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
 2. **双启动方式（设置可选）**：支持在 **WSL 中启动**或在 **Windows 中直接启动**，
    两种方式的端口与附加参数可分别配置
-3. **已启动自动识别**：端口已被监听时（比如你自己已启动过 dsh），跳过启动步骤、
-   直接在内置浏览器中打开 WebUI，不会重复启动进程；注意新版 dsh（0.1.2-rc.1 起）需要
-   启动令牌认证，插件拿不到令牌时会**借用内置浏览器里已有的认证 cookie**，工作空间跟随、
-   语言与文件同步都照常工作；只有浏览器里也没有可用 cookie 时页面才会停在认证提示页，
-   这种情况请通过插件启动（或重启）dsh
-4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；多窗口时跟随当前**活动窗口**，
-   且每个窗口的页面都固定在自己的项目上，多个窗口共用一个 dsh 也不会互相串工作空间；
-   默认每次打开都停在当前项目的空白新会话（可在设置中改为恢复上次会话）
-5. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
-6. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
+3. **始终启动自己的 dsh**：端口上已经有 dsh 时（你自己启动的、或上个会话遗留的进程）**不会复用**，
+   而是顺延到下一个空闲端口、启动插件自己的实例 —— 每个窗口都跑在自己的 dsh 上，互不影响
+4. **工作空间跟随项目**：以当前打开的项目根目录作为 dsh 工作空间；默认每次打开都停在当前项目的
+   空白新会话（可在设置中改为恢复上次会话）
+5. **每个 IDE 窗口一个独立 dsh**：每个项目窗口各自启动一个自己的 dsh（端口从设置里的端口开始、
+   被占用时自动顺延），刷新页面、工作空间、会话与页面状态在窗口之间完全互不影响；
+   关闭某个项目窗口时，属于它的 dsh 会一并停止
+6. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
+7. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
    自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
-7. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径时在 IDE 编辑器中打开（能定位到行号或编辑内容），
+8. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径时在 IDE 编辑器中打开（能定位到行号或编辑内容），
    不再使用 dsh 侧边栏预览；打不开时仍走 dsh 预览
-8. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时（以及之后切换工作空间/会话时），自动定位到当前会话，
+9. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时（以及之后切换工作空间/会话时），自动定位到当前会话，
    并高亮它所在的工作空间分组，会话很多时也能一眼看清"我在哪个工作空间、当前会话在哪"
-9. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-10. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
-11. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
+10. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+11. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
+12. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址
@@ -88,17 +86,14 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
     若安全软件（杀毒/防火墙）弹出拦截提示，请选择**允许/放行**，否则可能导致启动失败
   - 两种启动方式的**端口与附加参数分别配置**（互不影响），切换启动方式无需改回设置
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
-- **已启动自动识别**：如果对应端口已被监听（比如你自己已经启动了 dsh），插件会**跳过启动步骤**，
-  直接在内置浏览器中打开 WebUI，不会重复启动进程；这类「外部启动的 dsh」也不会被插件误停。
-  注意：新版 dsh（0.1.2-rc.1 起）带启动令牌认证，插件拿不到令牌时（dsh 由上次 IDE 会话或外部启动）
-  会**借用内置浏览器里已有的认证 cookie**（浏览器认证过就还有效），工作空间跟随、语言与文件同步
-  照常工作；只有浏览器里也没有可用 cookie 时，页面才会停在认证提示页（日志有说明）——
-  这种情况请通过插件启动或重启 dsh
-- **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台预热 dsh 与内嵌浏览器页面，
-  首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；IDE 退出时 dsh 一并自动停止。
-  多窗口时**每个项目窗口各自在后台预热自己的一份浏览器**：哪个窗口首次打开工具窗口都是直接复用，
-  不必现场冷启动浏览器；某个窗口自己的预热还没好时，也可以先复用其他窗口预热好的浏览器，
-  接管后再把工作空间切回本窗口的项目。预热不依赖窗口是否可见/是否被激活：窗口还藏在后台时
+- **端口已有 dsh 也不复用**：如果端口已被监听（你自己启动的 dsh、或上个会话遗留的进程），插件
+  **不会复用它**（复用别人的实例等于共用页面状态，窗口之间又会互相影响），而是顺延到下一个
+  空闲端口、启动**本窗口自己的** dsh；外部启动的 dsh 也不会被插件误停（插件只停自己启动的进程）
+- **启动时机**：「自动启动」默认为 IDEA 启动时（IDE 启动即在后台启动**本窗口自己的** dsh 并预热
+  内嵌浏览器页面，首次打开 Dsh Dock 窗口几乎瞬时显示），可改为打开工具窗口时或手动启动；
+  **关闭某个项目窗口时，属于它的 dsh 一并停止**，IDE 退出时统一清理。
+  多窗口时**每个项目窗口各自预热自己的一份浏览器**（各自连自己的 dsh 端口）：哪个窗口首次打开
+  工具窗口都是直接复用，不必现场冷启动浏览器；预热不依赖窗口是否可见/是否被激活：窗口还藏在后台时
   页面就已经开始加载（否则要等鼠标碰一下那个窗口才加载，侧边栏会一直空白）
 - **右键发送代码/文件到 Dsh Dock**：在编辑器中选中代码或在项目视图中选中文件，右键即可把
   `@路径` 引用直接发送到 Dsh 输入框（自动打开工具窗口、必要时自动启动 dsh）：
@@ -106,12 +101,13 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   - 选中文件 → `@<path>`（如 `@/mnt/c/.../gradlew`）
   - 路径按启动模式自动转换（WSL 模式用 `/mnt/...`，Windows 模式用 `C:/...`），
     与 dsh 的 `@路径` 文件引用约定一致，模型需要时会通过 read 工具读取
-- **项目空间默认项目根目录**：以当前打开的项目根路径作为 dsh 的工作目录启动，
-  并自动把当前项目同步为 WebUI 的会话工作空间（即使上次用过别的项目，也会切回当前项目）。
-  多个窗口同时打开插件页时，工作空间跟随当前**活动窗口**：后台窗口不刷新页面、不抢占，
-  切换到某窗口时若工作空间已是自己的项目则不打扰（dsh 页面会自动重连自愈），必要时才切回。
-  多窗口共用一个 dsh 时，每个窗口的页面还会被**钉在自己的项目上**：加载时直接打开本项目的会话，
-  加载后若发现落在别的项目上会自动切回（点开本项目会话，必要时才刷新），窗口之间不再互相串
+- **每个窗口一个独立 dsh（多窗口彻底互不干扰）**：每个 IDE 项目窗口各自启动一个 dsh，端口从设置里的
+  端口开始、被占用时自动顺延（`3080` → `3081` → …）。端口不同即页面来源不同，各窗口的页面状态与
+  认证天然隔离 —— **刷新某个窗口的 Dsh Dock 不会影响其他窗口**，也不会再出现"刷新后所有窗口都显示
+  同一个页面"；**关闭某个项目窗口时，它自己的 dsh 会一并停止**。
+  工作空间仍跟随各自项目：以当前打开的项目根路径作为 dsh 的工作目录，并自动把当前项目同步为 WebUI
+  的会话工作空间（即使上次用过别的项目，也会切回当前项目）；页面的"落地会话"也钉在本项目上，
+  加载后若发现落在别的项目上会自动切回（点开本项目会话，必要时才刷新）
 - **主题/语言**：WebUI 主题跟随 IDE（暗色 IDE 自动深色）；语言可选跟随 IDE/浏览器、简体中文或 English
   （跟随模式下按 IDE 界面语言自动同步 dsh 语言偏好：英文 IDE 显示英文 WebUI，中文 IDE 显示中文 WebUI）
 - **dsh 编辑后自动刷新**：dsh 的文件写入类工具（Edit / str_replace_editor / write 等）成功执行完时，
@@ -135,7 +131,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 2. 运行 `Run Plugin`（`gradlew runIde`），会启动一个带插件的测试 IDE 实例（IC 2024.2.5）
 3. 在测试 IDE 右侧工具栏点击黑色的鲸鱼图标，打开 Dsh Dock 工具窗口
 4. 首次打开会自动启动 dsh，并加载 `http://localhost:3080/`
-5. 如果端口 3080 已有 dsh 在运行（包括你自己启动的 dsh 进程），插件会跳过启动、直接加载 WebUI，而不会重复启动
+5. 起始端口（Windows 默认 `3080`）已被占用时**不会复用**：插件顺延到下一个空闲端口（`3081`、`3082`…）
+   启动本窗口自己的 dsh，各窗口互相独立；外部启动的 dsh 保持原样、不会被插件停止
 6. 未全局安装 dsh 也没关系：插件会自动使用官方启动命令 `npx @deepseek-ai/dsh web`（首次运行会自动下载），
    不需要手动执行 `npm i -g @deepseek-ai/dsh`
 
@@ -170,7 +167,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ```bash
 ./gradlew buildPlugin
-# 产物: build/distributions/dsh-idea-plugin-1.2.0.zip
+# 产物: build/distributions/dsh-idea-plugin-1.3.0.rc.zip
 # 通过 IDEA: Settings -> Plugins -> Install Plugin from Disk... 安装
 ```
 
@@ -181,9 +178,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
 | 启动方式 | `在 Windows 中直接启动`（默认）或 `在 WSL 中启动`（Windows+WSL） | Windows |
-| WSL 端口 | WSL 模式下 dsh web 监听端口（WSL 与 Windows 可各自使用不同端口） | `3090` |
+| WSL 端口 | WSL 模式下的**起始端口**（第一个窗口使用；已被占用时后续窗口自动顺延） | `3090` |
 | WSL 附加参数 | WSL 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
-| Windows 端口 | Windows 模式下 dsh web 监听端口 | `3080` |
+| Windows 端口 | Windows 模式下的**起始端口**（第一个窗口使用；已被占用时后续窗口自动顺延） | `3080` |
 | Windows 附加参数 | Windows 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 | 自动启动 | 启动时机：IDEA 启动时（默认，含内嵌浏览器预热）/ 打开工具窗口时 / 手动启动 | IDEA 启动时 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
@@ -195,6 +192,10 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 > 端口与附加参数按启动方式分别配置，**实际启动时只使用当前选中的启动方式对应的那一组**；
 > 切换到另一种启动方式无需改回端口/参数。
+>
+> 端口是**每个 IDE 窗口各自的 dsh 实例的起始端口**：第一个窗口用该端口，之后打开的窗口自动顺延
+> （`3080` → `3081` → …），因此窗口之间完全独立（刷新、工作空间、会话、页面状态互不影响）。
+> 端口上已有 dsh（你自己启动的、或遗留进程）时也不会复用，直接顺延到空闲端口。
 
 > 兼容旧版本：插件设置是通用化的，WSL 发行版、NVM 路径、ldsh.cmd 等本机细节
 > 一律不配置、不持久化，由用户自己的环境负责，换机器/换 IDE 无需重新配置。
@@ -213,10 +214,14 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   因此插件在每次加载 WebUI 前，通过 dsh 的 `/api` 通道把当前项目注册为工作空间
   （自动适配新旧版 dsh 接口差异，新版含浏览器安全认证），并在它不是"最近"时新建一个会话提升其
   新鲜度——这样页面初始选中就会落在当前项目上，而不是上次用过的项目。
-  **多窗口隔离**：多个窗口共用同一个 dsh 实例（同一进程的多个项目窗口、或复用同一端口的多个
-  IDE 实例），为避免互相把工作空间抢成别的项目，插件只在**当前活动窗口**同步工作空间：
-  后台窗口不刷新页面、不抢占「项目空间」；窗口重新获得焦点时若工作空间已是自己的项目则保持
-  页面（dsh 页面在服务重启后由客户端自动重连自愈），必要时才同步并切回自己的项目。
+  **多窗口隔离（每个窗口一个 dsh）**：dsh 的"当前工作空间/当前会话"只存在于内嵌浏览器的本地存储里，
+  而本地存储按**页面来源（协议+主机+端口）**隔离 —— 多个窗口共用一个端口时会共用同一份选择：
+  任一窗口刷新/切换都会改写它，其他窗口的页面脚本发现"自己不在该在的会话上"就跟着重载，
+  最终全部落到同一个页面。因此插件为**每个 IDE 项目窗口各起一个 dsh 实例**，端口从设置里的
+  起始端口依次分配（被占用时顺延），各窗口的页面状态与认证完全隔离；关闭某个项目窗口时该窗口的
+  dsh 随之停止。另外，工作空间注册表（`~/.dsh/storages`）是所有 dsh 进程共用的文件、写入是
+  "整份覆盖"，因此插件把各窗口的"变更类"调用（新建工作空间/会话、归档空白会话）用应用级互斥锁
+  串行化，避免两个窗口同时写注册表互相覆盖。
   同时还会：
   - **空白会话卫生**：归档项目工作空间里遗留的空白会话（空会话无内容损失）。dsh 的"新会话"
     会**复用**工作空间里已有的空白会话（它就是"新会话"槽），遗留的旧空白会让"新会话"点了没反应；
@@ -242,15 +247,17 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **只停自己启动的 dsh**：WSL 模式启动时把 dsh 的真实 PID 写入标识文件（`dsh-owner-*.pid`），
   停止/退出清理时 `kill` 该 PID；Windows 模式 `taskkill` 本插件持有的进程树。
   **外部启动的同端口 dsh（如手动 `ldsh.cmd`）绝不会被误杀**
-- **退出清理三层保障**（异步、不拖慢 IDEA 关闭）：IDEA 退出流程的 `AppLifecycleListener`
-  早期回调（异步触发，不阻塞退出）+ JVM shutdown hook 兜底 + 独立 PowerShell 看门狗
-  （监视 IDE 进程，IDE 消失且端口仍开时自动执行停止脚本；即使 IDE 被强杀/崩溃也会清理）
+- **关窗/退出清理**：**关闭某个项目窗口时**立即停止属于该窗口的 dsh（只停本插件启动的进程，
+  不影响其他窗口）；**IDE 退出时**统一停止所有由插件启动的 dsh —— 由 `AppLifecycleListener`
+  早期回调（异步触发，不阻塞退出）+ JVM shutdown hook 两层保障，再叠加每个进程自己的独立
+  PowerShell 看门狗（监视 IDE 进程，IDE 消失且端口仍开时自动执行停止脚本；即使 IDE 被强杀/崩溃
+  也会清理）
 
 ## 常见问题
 
 - **页面停在认证提示页（dsh 0.1.2-rc.1 起）**：新版 dsh 的 WebUI 需要**启动令牌**完成浏览器认证。
-  由插件启动的 dsh 会自动完成认证；若 dsh 是外部启动的（插件无法获得其令牌），请**通过插件启动/重启
-  dsh**，或手动打开 dsh web 启动时打印的带 `?token=` 地址
+  插件自己启动的 dsh 会自动完成认证；只有在令牌没被捕获到（例如 dsh 被外部手段重启过）时才可能
+  看到认证页，在工具窗口点一次「刷新」，或停止后重新启动 dsh 即可
 - **WebUI 区域显示空白/加载失败**：确认 `Settings -> Tools -> Web Browsers and Preview` 中
   JCEF 已启用（或注册表键 `ide.browser.jcef.enabled` 为 true）；插件内置回退面板可直接用系统浏览器打开，
   且 JCEF 不可用时 WebUI 就绪后会自动改用系统浏览器打开

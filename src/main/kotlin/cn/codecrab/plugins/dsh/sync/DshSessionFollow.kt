@@ -133,7 +133,7 @@ class DshSessionFollow(
     /** 建立 remote.mux WebSocket (带浏览器认证 cookie); 失败返回 null */
     private fun connect(latch: CountDownLatch): WebSocket? {
         val cookie = DshWebAuth.cookieHeader(port)
-            ?: (if (DshWebAuth.awaitToken(2000)) DshWebAuth.cookieHeader(port) else null)
+            ?: (if (DshWebAuth.awaitToken(port, 2000)) DshWebAuth.cookieHeader(port) else null)
         return try {
             val builder = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()
                 .newWebSocketBuilder()

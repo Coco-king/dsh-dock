@@ -4,13 +4,21 @@ import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.util.WslSupport
 import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
-import com.intellij.ide.AppLifecycleListener
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.components.Service
+import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.project.Project
 import java.io.File
 
 /**
- * dsh 进程管理器 (应用级单例)。
+ * dsh 进程管理器 (**每个 IDE 窗口一个实例**: 项目级服务)。
+ *
+ * 为什么一个窗口一个进程: dsh 的"当前工作空间/当前会话"只存在于浏览器 localStorage
+ * (`dsh.sessions.current`, 按 origin 隔离), 多个窗口共用一个端口时这份状态是共享的 ——
+ * 刷新一个窗口, 其他窗口的页面脚本会判定"自己不在该在的会话上"而跟着重载,
+ * 最后全落到同一个页面。每个窗口各用一个端口 (各自一个 dsh 进程) 后, 各窗口的页面状态
+ * 与认证完全隔离, 互不影响。
  *
  * 支持两种启动方式 (见设置):
  *  - WSL 模式: 通过 `wsl.exe bash` 在 WSL 中运行 dsh (通用化: 自动加载用户 ~/.bashrc,
@@ -20,30 +28,45 @@ import java.io.File
  * 进程隐藏后台运行 (PowerShell -WindowStyle Hidden 包裹, 不弹控制台窗口),
  * 输出捕获到工具窗口日志面板, 轮询端口等待 WebUI 就绪。
  *
- * 退出清理三层保障, 避免 "IDE 退出了 dsh 还在后台":
- *  1. AppLifecycleListener.appClosing — IDEA 退出流程早期回调, 应用服务仍可用
- *  2. JVM shutdown hook — 兜底 (即使 appClosing 没触发)
- *  3. 独立看门狗进程 — 监视 IDE 进程, IDE 消失且端口仍开时自动执行停止脚本
- *     (即使 IDE 被强杀/崩溃, dsh 也会被清理)
+ * 生命周期:
+ *  - **关闭项目窗口**: [dispose] 立即停止本窗口自己的 dsh (释放进程, 不影响其他窗口);
+ *  - **IDE 退出**: [DshServers.stopAll] 统一停止所有由本插件启动的 dsh
+ *    (AppLifecycleListener.appClosing + JVM shutdown hook 两层);
+ *  - **兜底**: 每个进程启动时都会拉起独立看门狗 —— 监视 IDE 进程, IDE 消失且端口仍开时
+ *    自动执行停止脚本 (即使 IDE 被强杀/崩溃, dsh 也会被清理)。
  */
-object DshServer {
+@Service(Service.Level.PROJECT)
+class DshServer(private val project: Project) : Disposable {
 
     private val LOG = Logger.getInstance(DshServer::class.java)
 
     enum class State { IDLE, STARTING, RUNNING, STOPPING }
 
+    /** 本窗口 dsh 的状态 (每个窗口各自独立: 一个窗口启停不影响其他窗口) */
     @Volatile
     var state: State = State.IDLE
         private set
 
-    /** 状态监听器: 工具窗口面板注册后, 任意窗口启停 dsh 都会同步刷新所有面板的 UI */
+    /**
+     * 本窗口 dsh 的端口 (由 [DshServers] 分配: 设置里的基础端口优先, 已被其他窗口占用时自动顺延)。
+     * 端口同时是页面的 origin, 决定本窗口的 localStorage/cookie 与其他窗口隔离 ——
+     * 这是"每个窗口互相独立"的根: 换端口就是换 origin, 页面状态不再与他人共用一份。
+     */
+    @Volatile
+    var port: Int = 0
+        private set
+
+    /** 本窗口的项目根路径 (作为 dsh 的工作目录与工作空间) */
+    val projectPath: String?
+        get() = project.basePath
+
+    /** 状态监听器: 本窗口的面板注册后, 只广播本窗口的状态变化 */
     private val stateListeners = java.util.concurrent.CopyOnWriteArrayList<(State) -> Unit>()
 
     /**
-     * 注册状态监听 (工具窗口面板创建时调用)。
-     * 注册后立即以当前状态回调一次, 便于新面板初始化 UI —— 多窗口 (同一 IDE 进程内多个项目窗口)
-     * 共用本单例, dsh 可能已在其他窗口启动, 而状态回调只在状态切换时触发,
-     * 若不创建时同步, 会出现"按钮显示停止、状态文字却显示未启动"的不一致。
+     * 注册状态监听 (本窗口的工具窗口面板创建时调用)。
+     * 注册后立即以当前状态回调一次, 便于新面板初始化 UI (dsh 可能已在本窗口启动过);
+     * 之后的状态变化只广播给本窗口的面板。
      */
     fun addStateListener(listener: (State) -> Unit) {
         stateListeners.add(listener)
@@ -81,73 +104,39 @@ object DshServer {
     private val lock = Any()
 
     init {
-        // 1) IDEA 退出流程早期回调 (服务仍可用); 异步清理, 不阻塞退出
-        try {
-            ApplicationManager.getApplication().messageBus.connect().subscribe(
-                AppLifecycleListener.TOPIC,
-                object : AppLifecycleListener {
-                    override fun appClosing() {
-                        stopOnExit()
-                    }
-                }
-            )
-        } catch (_: Throwable) {
-        }
-        // 2) JVM shutdown hook 兜底 (异步触发, 真正的清理由独立看门狗兜底完成)
-        Runtime.getRuntime().addShutdownHook(Thread({ stopOnExit() }, "dsh-plugin-shutdown"))
+        // 端口在实例创建时先分配好 (面板/预热/文件同步都直接读它);
+        // 真正启动时还会再确认一次空闲 (见 [assignFreePort])
+        val allocated = DshServers.allocatePort(this)
+        port = if (allocated in 1..65535) allocated else DshSettingsState.getInstance().currentPort()
+        DshServers.register(project, this)
     }
 
-    fun webUrl(port: Int): String = "http://localhost:$port/"
-
-    /** WebUI 地址 (带当前 dsh 进程的启动令牌, 用于通过新版 dsh 的浏览器认证); 令牌未捕获时返回 null */
-    fun webTokenUrl(port: Int): String? = DshWebAuth.webTokenUrl(port)
-
-    fun isRunning(): Boolean = state == State.RUNNING
 
     /**
-     * 将「外部启动的 dsh」的运行状态复位为未启动 (只复位状态, 不触碰任何进程)。
-     * 端口上曾有的外部 dsh 消失 (如上个 IDE 会话的退出看门狗清理遗留进程) 而状态还卡在
-     * RUNNING 时, 面板会一直显示运行中且「启动」按钮无效 —— 仅在这种"无本插件进程标识"
-     * 的情况下复位状态; 本插件自己启动的 dsh 不受影响 (其消亡由 watch() 负责置回 IDLE)。
+     * 启动本窗口自己的 dsh。
+     * 状态变化通过 [addStateListener] 注册的监听器广播给本窗口的面板。
+     * 端口上已有 dsh (上次会话遗留 / 用户手动启动) 时**不复用**, 直接换一个空闲端口自己启动 ——
+     * 借用别人的实例就等于共用页面状态, 窗口之间必然互相影响。
      *
-     * @return true 表示确实发生了复位
-     */
-    fun resetIfExternal(): Boolean = synchronized(lock) {
-        if (state == State.RUNNING && process == null && stopCmdPath == null) {
-            setState(State.IDLE)
-            true
-        } else {
-            false
-        }
-    }
-
-    /**
-     * 启动 dsh。
-     * 状态变化通过 [addStateListener] 注册的监听器广播给所有面板。
-     *
-     * @param projectPath 当前项目根路径
-     * @param onLog       日志回调 (任意线程, 调用方负责切到 EDT)
+     * @param onLog 日志回调 (任意线程, 调用方负责切到 EDT)
      * @return true 表示真正发起了一次启动尝试 (可能随后同步失败, 调用方可据此标记"启动失败"通知);
-     *         false 表示未发起 (端口无效 / 已在运行 / 端口已被占用直接复用)
+     *         false 表示未发起 (已在运行 / 找不到空闲端口)
      */
-    fun start(projectPath: String?, onLog: (String) -> Unit): Boolean {
+    fun start(onLog: (String) -> Unit): Boolean {
         val settings = DshSettingsState.getInstance()
-        // 端口/附加参数按当前选中的启动方式 (WSL / Windows) 分别配置
-        val port = settings.currentPort()
-        if (port !in 1..65535) {
-            onLog(DshBundle.message("server.log.invalidPort", port.toString(), settings.launchMode))
+        val configured = settings.currentPort()
+        if (configured !in 1..65535) {
+            onLog(DshBundle.message("server.log.invalidPort", configured.toString(), settings.launchMode))
             return false
         }
+        var port = 0
         synchronized(lock) {
             if (state == State.STARTING || state == State.RUNNING) {
                 onLog(DshBundle.message("server.log.alreadyRunning", state.name))
                 return false
             }
-            if (WslSupport.isPortOpen(port)) {
-                onLog(DshBundle.message("server.log.portInUse", port.toString()))
-                setState(State.RUNNING)
-                return false
-            }
+            if (!assignFreePort(onLog)) return false
+            port = this.port
             setState(State.STARTING)
         }
         // 启动放到后台线程: 生成脚本/拉起进程/端口轮询等都可能阻塞较久,
@@ -179,7 +168,7 @@ object DshServer {
             return
         }
         // 新进程会产生新的启动令牌: 清空上一进程的认证状态
-        DshWebAuth.reset()
+        DshWebAuth.reset(port)
         // 同时作废按端口缓存的 RPC 风格与"认证被拒"标记 (新进程重新探测)
         DshWorkspaceApi.invalidateStyle(port)
         when (mode) {
@@ -358,7 +347,7 @@ object DshServer {
                     "kill -9 ${p.pid()} 2>/dev/null || true\n"
             )
             stopCmdPath = stopSh.absolutePath
-            drain(p, onLog)
+            drain(p, port, onLog)
             watch(p, port, onLog)
             waitForReadyInThread(port, p, onLog)
             return
@@ -427,21 +416,21 @@ object DshServer {
         // 预生成停止脚本 + 启动退出看门狗, 保证 IDE 无论怎么退出 dsh 都能被清理
         stopCmdPath = prepareStopScript(port, mode)
         startExitWatchdog(stopCmdPath!!, port)
-        drain(p, onLog)
+        drain(p, port, onLog)
         watch(p, port, onLog)
         waitForReadyInThread(port, p, onLog)
     }
 
     // ---------- 输出 / 生命周期 ----------
 
-    private fun drain(p: Process, onLog: (String) -> Unit) {
+    private fun drain(p: Process, port: Int, onLog: (String) -> Unit) {
         fun reader(stream: java.io.InputStream, tag: String) {
             Thread({
                 try {
                     stream.bufferedReader(Charsets.UTF_8).useLines { lines ->
                         for (line in lines) {
                             // 新版 dsh 启动时打印带 token 的 WebUI 地址, 捕获令牌供浏览器/API 认证
-                            DshWebAuth.captureFromLogOutput(line)
+                            DshWebAuth.captureFromLogOutput(port, line)
                             onLog("$tag $line")
                         }
                     }
@@ -553,7 +542,7 @@ object DshServer {
                     stopCmdPath = null
                     ownerPidFileWsl = null
                     // dsh 已停止: 清空浏览器认证状态 (新进程会打印新的启动令牌)
-                    DshWebAuth.reset()
+                    DshWebAuth.reset(port)
                     setState(State.IDLE)
                 }
             }, "dsh-plugin-stop").apply { isDaemon = true }.start()
@@ -648,13 +637,14 @@ object DshServer {
     }
 
     /**
-     * 异步的退出清理: 只停本插件启动的 dsh, 不阻塞 IDEA 退出。
-     * appClosing 与 JVM shutdown hook 都会调用; 即使本线程在 JVM 停止时被中断,
-     * 独立看门狗进程也会在 IDE 进程消失后完成清理。
+     * 异步清理: 只停本插件启动的 dsh (不是本插件启动的进程一律不动), 不阻塞调用方。
+     * 关闭本项目窗口 ([dispose]) 与 IDE 退出 ([DshServers.stopAll]) 都会调用;
+     * 即使本线程在 JVM 停止时被中断, 独立看门狗进程也会在 IDE 进程消失后完成清理。
      */
-    private fun stopOnExit() {
+    fun stopForExit() {
+        val stopPath = stopCmdPath ?: return // 没有本插件启动的进程标识 -> 外部 dsh, 不动
+        stopCmdPath = null // 幂等: 关窗清理与 IDE 退出清理可能都会走到这里
         try {
-            val stopPath = stopCmdPath ?: return // 没有本插件启动的进程标识 -> 外部 dsh, 不动
             Thread({
                 try {
                     val pb = if (WslSupport.isWindows) {
@@ -670,11 +660,55 @@ object DshServer {
                         process?.destroy()
                     } catch (_: Throwable) {
                     }
-                    DshWebAuth.reset()
+                    DshWebAuth.reset(port)
                 } catch (_: Throwable) {
                 }
             }, "dsh-plugin-exit-cleanup").apply { isDaemon = true }.start()
         } catch (_: Throwable) {
         }
+    }
+
+    /**
+     * 项目窗口关闭: 注销实例并停止本窗口自己的 dsh —— 每个窗口一个实例, 关窗即释放,
+     * 否则关掉的窗口会一直留着一个 node 进程 (IDE 退出时还有 [DshServers.stopAll] 兜底)。
+     */
+    override fun dispose() {
+        DshServers.unregister(project)
+        stopForExit()
+    }
+
+    /**
+     * 落实这次启动用的端口: 分配一个**空闲**端口, 端口已被监听时不复用、直接换下一个。
+     * 分配本身就会跳过被监听的端口, 这里再确认一次是为了堵住"分配后到启动前被别人抢占"的极小窗口。
+     *
+     * @return false = 找不到空闲端口 (已记日志提示换起始端口或先停掉占用者), 不发起启动
+     */
+    private fun assignFreePort(onLog: (String) -> Unit): Boolean {
+        repeat(PORT_ASSIGN_ATTEMPTS) {
+            val allocated = DshServers.allocatePort(this)
+            if (allocated in 1..65535 && !WslSupport.isPortOpen(allocated)) {
+                port = allocated
+                return true
+            }
+            if (allocated in 1..65535) {
+                onLog(DshBundle.message("server.log.portBusyRetry", allocated.toString()))
+            }
+        }
+        onLog(DshBundle.message("server.log.noFreePort", DshSettingsState.getInstance().currentPort().toString()))
+        return false
+    }
+
+    companion object {
+
+        /** 端口分配的重试次数 (分配后到启动前的抢占窗口极小, 重试几次足够) */
+        private const val PORT_ASSIGN_ATTEMPTS = 2
+
+        /** 本窗口的实例 (项目级服务) */
+        fun getInstance(project: Project): DshServer = project.service()
+
+        fun webUrl(port: Int): String = "http://localhost:" + port + "/"
+
+        /** WebUI 地址 (带该端口 dsh 进程的启动令牌, 用于通过新版 dsh 的浏览器认证); 令牌未捕获时返回 null */
+        fun webTokenUrl(port: Int): String? = DshWebAuth.webTokenUrl(port)
     }
 }
