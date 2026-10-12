@@ -167,7 +167,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ```bash
 ./gradlew buildPlugin
-# 产物: build/distributions/dsh-idea-plugin-1.3.0.rc.zip
+# 产物: build/distributions/dsh-idea-plugin-1.3.0.zip
 # 通过 IDEA: Settings -> Plugins -> Install Plugin from Disk... 安装
 ```
 
