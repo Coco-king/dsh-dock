@@ -1,5 +1,15 @@
 # Changelog / 变更日志
 
+## [1.3.0.rc] - 2026-10-12
+
+### 中文 (Chinese)
+
+- **变更（Changed）**：每个 IDE 窗口各自启动一个独立的 dsh（端口从设置里的端口开始自动顺延），窗口之间的刷新、工作空间、会话与页面状态互不影响；关闭某个项目窗口时，该窗口的 dsh 一并停止
+
+### English
+
+- **Changed**: Every IDE window now runs its own dsh (the port shifts up from the configured one), so refreshing, workspaces, sessions and page state are independent between windows; closing a window also stops its own dsh
+
 ## [1.2.1] - 2026-09-20
 
 ### 中文 (Chinese)
