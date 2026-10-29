@@ -1,5 +1,15 @@
 # Changelog / 变更日志
 
+## [1.4.2] - 2026-10-29
+
+### 中文 (Chinese)
+
+- **修复（Fixed）**：在 dsh 里点击文件路径打开时，编辑器定位现在只作用于目标文件本身（分屏等少数场景下此前可能落到别的编辑器），行为与 1.4.0 保持一致
+
+### English
+
+- **Fixed**: Opening a file path from dsh now positions the editor of that exact file only (in rare split-editor cases the previous build could target another editor), matching the 1.4.0 behaviour
+
 ## [1.4.1] - 2026-10-29
 
 ### 中文 (Chinese)

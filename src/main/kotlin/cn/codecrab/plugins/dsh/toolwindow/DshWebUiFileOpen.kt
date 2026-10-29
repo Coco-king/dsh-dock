@@ -9,6 +9,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.ui.jcef.JBCefBrowser
@@ -267,11 +268,12 @@ object DshWebUiFileOpen {
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || !file.isValid) return@invokeLater
             try {
-                // openFile + selectedTextEditor: openTextEditor 在新版 IDE 已废弃并列入移除计划,
-                // 而这组老 API 各版本都稳定可用
+                // openTextEditor 在新版 IDE 已废弃并列入移除计划: 改为 openFile 打开后取"这个文件"的编辑器;
+                // 优先该文件当前被选中的编辑器, 退化时取它的第一个编辑器 —— 绝不拿别的文件的编辑器做定位
                 val manager = FileEditorManager.getInstance(project)
-                manager.openFile(file, true)
-                val editor = manager.selectedTextEditor
+                val opened = manager.openFile(file, true)
+                val fileEditor = manager.getSelectedEditor(file) ?: opened.firstOrNull()
+                val editor = (fileEditor as? TextEditor)?.editor
                 if (editor == null) {
                     // 没有可用的文本编辑器 (罕见, 如非文本文件): 退回导航式打开
                     try {
