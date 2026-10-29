@@ -267,12 +267,15 @@ object DshWebUiFileOpen {
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || !file.isValid) return@invokeLater
             try {
-                val descriptor = OpenFileDescriptor(project, file, 0)
-                val editor = FileEditorManager.getInstance(project).openTextEditor(descriptor, true)
+                // openFile + selectedTextEditor: openTextEditor 在新版 IDE 已废弃并列入移除计划,
+                // 而这组老 API 各版本都稳定可用
+                val manager = FileEditorManager.getInstance(project)
+                manager.openFile(file, true)
+                val editor = manager.selectedTextEditor
                 if (editor == null) {
-                    // 没有可用编辑器 (罕见): 退回导航式打开
+                    // 没有可用的文本编辑器 (罕见, 如非文本文件): 退回导航式打开
                     try {
-                        descriptor.navigate(true)
+                        OpenFileDescriptor(project, file, 0).navigate(true)
                     } catch (_: Throwable) {
                     }
                     return@invokeLater

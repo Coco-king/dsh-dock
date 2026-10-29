@@ -1,5 +1,17 @@
 # Changelog / 变更日志
 
+## [1.4.1] - 2026-10-29
+
+### 中文 (Chinese)
+
+- **修复（Fixed）**：兼容 IntelliJ IDEA 2026.3 等新版 IDE——此前在这些版本上插件会因接口缺失而无法加载，现在可以正常启用
+- **修复（Fixed）**：替换一处已废弃的编辑器打开方式，消除新版 IDE 的弃用告警
+
+### English
+
+- **Fixed**: Compatibility with IntelliJ IDEA 2026.3 and other recent IDEs — the plugin used to fail loading there because of a missing API; it now installs and runs normally
+- **Fixed**: Replaced a deprecated way of opening editors, clearing the deprecation warning newer IDEs reported
+
 ## [1.4.0] - 2026-10-29
 
 ### 中文 (Chinese)

@@ -3,7 +3,6 @@ package cn.codecrab.plugins.dsh.sync
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
@@ -48,9 +47,9 @@ object DshVcsRefresh {
         if (project.isDisposed) return
         refreshGitDirectory(project)
         onEdt(project) {
+            // markEverythingDirty 就会让提交页按"全部重算"处理;
+            // 不再调 ChangeListManager.scheduleUpdate() —— 新版 IDE 已移除该方法 (二进制不兼容)
             VcsDirtyScopeManager.getInstance(project).markEverythingDirty()
-            @Suppress("DEPRECATION")
-            ChangeListManager.getInstance(project).scheduleUpdate()
         }
     }
 
