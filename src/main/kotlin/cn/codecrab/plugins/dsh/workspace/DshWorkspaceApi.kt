@@ -445,6 +445,29 @@ object DshWorkspaceApi {
         return if (r.ok) r.value else null
     }
 
+    /**
+     * 读取 dsh 某一轮 (turn) 的改动文件摘要: `GET /api/changes.summary?sessionId=<id>&seq=<seq>`。
+     *
+     * 为什么需要它: dsh 0.2 起模型主要在 `run_code` 里调用写入工具 (嵌套调用不产生顶层的
+     * tool/call / tool/result 事件), 插件收不到逐条写入事件, 只能靠 dsh 每轮结束时追加的
+     * `workspace/changes` 会话事件 + 这个只读接口拿到"这一轮改了哪些文件"。
+     *
+     * @param seq 该 `workspace/changes` 事件的序号 (摘要按事件序号索引)
+     * @return 摘要对象 (turn / files / total / added / deleted);
+     *         没有摘要 (旧版 dsh、会话已释放) 或请求失败返回 null
+     */
+    fun changeSummary(port: Int, sessionId: String, seq: Long, timeoutMs: Long = 3000): JsonObject? {
+        if (sessionId.isBlank()) return null
+        val encoded = java.net.URLEncoder.encode(sessionId, "UTF-8")
+        val text = get(port, "changes.summary", "sessionId=$encoded&seq=$seq", timeoutMs) ?: return null
+        return try {
+            JsonParser.parseString(text).asJsonObject
+        } catch (t: Throwable) {
+            LOG.warn("dsh change summary parse failed", t)
+            null
+        }
+    }
+
     /** 在截止时间前调用一次 dsh /api RPC; 传输层失败返回 null, 业务失败返回 ok=false 的结果 */
     private fun rpcWithin(port: Int, method: String, payload: JsonObject, deadline: Long): RpcResult? {
         if (System.currentTimeMillis() >= deadline) return null
@@ -582,20 +605,58 @@ object DshWorkspaceApi {
         return requestOnce("http://127.0.0.1:$port/api/$method", method, body, cookie)
     }
 
-    /** 对单个地址发起一次 POST; 传输失败 (未拿到 HTTP 状态) 返回 null */
-    private fun requestOnce(url: String, method: String, body: String, cookie: String?): PostResult? {
+    /**
+     * 带认证 cookie 的 GET 只读请求 (如 changes.summary); 401 时作废缓存重换一次, 非 2xx 返回 null。
+     * 404 属正常业务结果 (该轮没有摘要), 不据此重置 RPC 风格缓存。
+     */
+    private fun get(port: Int, path: String, query: String, timeoutMs: Long): String? {
+        var cookie = DshWebAuth.cookieHeader(port)
+        if (cookie == null && DshWebAuth.awaitToken(port, 2000)) {
+            cookie = DshWebAuth.cookieHeader(port)
+        }
+        var result = getOnce(port, path, query, cookie, timeoutMs)
+        if (result != null && result.status == 401) {
+            DshWebAuth.onUnauthorized(port)
+            val fresh = DshWebAuth.cookieHeader(port)
+            if (fresh != null) result = getOnce(port, path, query, fresh, timeoutMs)
+        }
+        if (result == null || result.status !in 200..299) {
+            LOG.debug("dsh api GET $path -> HTTP ${result?.status ?: "transport error"}")
+            return null
+        }
+        return result.text
+    }
+
+    /** 单次 GET: 先 localhost, 不可达时退回 127.0.0.1 (与 [postOnce] 同样的地址策略) */
+    private fun getOnce(port: Int, path: String, query: String, cookie: String?, timeoutMs: Long): PostResult? {
+        val suffix = "/api/$path?$query"
+        val primary = requestOnce("http://${DshWebAuth.authority(port)}$suffix", "GET", null, cookie, timeoutMs)
+        if (primary != null) return primary
+        return requestOnce("http://127.0.0.1:$port$suffix", "GET", null, cookie, timeoutMs)
+    }
+
+    /** 对单个地址发起一次 HTTP 请求 (body 为 null 时发 GET, 否则 POST); 传输失败 (未拿到 HTTP 状态) 返回 null */
+    private fun requestOnce(
+        url: String,
+        method: String,
+        body: String?,
+        cookie: String?,
+        timeoutMs: Long = 4000,
+    ): PostResult? {
         var conn: HttpURLConnection? = null
         return try {
             // URL(String) 构造器已废弃 (Java 20+), 改用 URI.toURL()
             val target = java.net.URI(url).toURL()
             conn = target.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
+            conn.requestMethod = if (body == null) "GET" else "POST"
             conn.connectTimeout = 2000
-            conn.readTimeout = 4000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
+            conn.readTimeout = timeoutMs.toInt()
             cookie?.let { conn.setRequestProperty("Cookie", it) }
-            conn.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+            if (body != null) {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
+            }
             val code = conn.responseCode
             val text = try {
                 conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
@@ -609,7 +670,7 @@ object DshWorkspaceApi {
                 } catch (_: Throwable) {
                     null
                 }
-                LOG.warn("dsh api $method -> HTTP $code, url=$url, body=${body.take(240)}, resp=${resp?.take(160)}")
+                LOG.warn("dsh api $method -> HTTP $code, url=$url, body=${body?.take(240)}, resp=${resp?.take(160)}")
             }
             PostResult(code, text)
         } catch (t: Throwable) {

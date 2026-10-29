@@ -66,6 +66,10 @@ class DshSessionFollow(
     @Volatile
     private var desiredSessions: Set<String>? = null
 
+    /** 会话 -> 工作目录 (dsh 侧路径): 校准会话列表时顺带记录, 供调用方把改动摘要里的相对路径补全 */
+    @Volatile
+    private var cwdBySession: Map<String, String> = emptyMap()
+
     @Volatile
     private var ws: WebSocket? = null
 
@@ -80,6 +84,9 @@ class DshSessionFollow(
         calibrateThread = c
         c.start()
     }
+
+    /** 某会话的工作目录 (dsh 侧路径); 尚未校准/未知返回 null */
+    fun cwdOf(sessionId: String): String? = cwdBySession[sessionId]
 
     fun stop() {
         running.set(false)
@@ -231,6 +238,7 @@ class DshSessionFollow(
      */
     private fun refreshNow(): Set<String> {
         val wanted = mutableSetOf<String>()
+        val cwdById = HashMap<String, String>()
         try {
             val list = DshWorkspaceApi.callJson(port, "session.list", JsonObject(), 4000)
             val items = list?.getAsJsonArray("items")
@@ -243,6 +251,7 @@ class DshSessionFollow(
                     if (!el.isJsonObject) continue
                     val o = el.asJsonObject
                     val sid = o.get("sessionId")?.asString ?: continue
+                    o.get("cwd")?.asString?.let { cwdById[sid] = it }
                     // 子会话 (subagent) 不跟随: dsh 只接受"父地址 + 子会话"的投递形式
                     if (o.get("parentSessionId") != null || o.get("origin")?.asString == "subagent") continue
                     if (expectedPath != null) {
@@ -265,6 +274,7 @@ class DshSessionFollow(
         }
         if (wanted != desiredSessions) onFollowSetChanged?.invoke(wanted)
         desiredSessions = wanted
+        if (cwdById.isNotEmpty()) cwdBySession = cwdById
         return wanted
     }
 

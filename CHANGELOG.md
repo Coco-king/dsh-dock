@@ -1,5 +1,17 @@
 # Changelog / 变更日志
 
+## [1.4.0] - 2026-10-29
+
+### 中文 (Chinese)
+
+- **修复（Fixed）**：升级到最新版 dsh 后，dsh 编辑代码时 IDE 里的文件又不再自动刷新了——现在编辑结束就能看到最新内容，无需重新打开文件
+- **新增（Added）**：dsh 完成 git 操作（提交、切换分支、拉取等）后，IDE 的提交页与提交记录会自动刷新，不必再手动切窗口或点刷新
+
+### English
+
+- **Fixed**: After upgrading to the latest dsh, files edited by dsh stopped refreshing in the IDE again — the latest content now shows up as soon as the edit is done, with no need to reopen files
+- **Added**: The IDE's commit page and commit history now refresh automatically once dsh finishes git operations (commit, branch switch, pull and so on) — no more switching windows or hitting refresh
+
 ## [1.3.0] - 2026-10-12
 
 ### 中文 (Chinese)

@@ -11,6 +11,7 @@ import com.google.gson.JsonParser
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
@@ -28,13 +29,21 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * 监听 dsh 的会话事件, 把 dsh 的文件写入同步到 IDEA。
+ * 监听 dsh 的会话事件, 把 dsh 的文件改动同步到 IDEA。
  *
  * 背景: dsh (尤其 WSL 模式) 编辑项目文件后, Windows 侧的文件变更通知经常不触发,
  * IDEA 的 VFS 不知道文件变了, 打开着的编辑器标签一直显示旧代码 (重新打开文件才更新)。
- * 本类监听 dsh 的**写入类工具事件** (`tool/call` / `tool/result`):
- * 当 dsh 的**文件写入类工具** (str_replace_editor / edit / write 等) 成功执行完时,
- * 定向刷新该文件的 VFS, 并重载打开的、无未保存修改的文档 —— 编辑器立即显示新代码。
+ *
+ * 两条信号, 分别覆盖不同形态的 dsh:
+ *  1. **写入工具事件** (`tool/call` / `tool/result`): 顶层工具本身就是写文件工具
+ *     (str_replace_editor / edit / write 等) 且执行成功时, 定向刷新该文件的 VFS。
+ *  2. **每轮改动摘要** (`workspace/changes`, dsh 0.2 起): 新版 dsh 由代码执行工具代跑
+ *     写文件工具, 写操作发生在它内部、不会产生顶层的 tool/call 事件 —— 此时只能靠 dsh
+ *     每轮结束时追加的 `workspace/changes` 事件, 再用只读接口 `/api/changes.summary`
+ *     取回该轮改动的文件清单 (脚本/命令改的文件同样在列), 逐个刷新。
+ *
+ * 刷新完文件还要通知 IDE 的版本控制视图 (见 [DshVcsRefresh]): dsh 在终端里提交/切换分支后,
+ * 提交页与提交记录也需要重算, 而这类操作可能一个工作区文件都没改。
  *
  * 传输按 dsh 版本自适应:
  *  1. 旧版事件流 (dsh ≤ 0.1.1):
@@ -45,7 +54,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 两类方式都不可用时静默降级 (只记一行日志), 绝不影响 WebUI 正常使用。
  *
  * 线程模型: 每个面板一个监听线程 (阻塞读流 / 轮询循环), 断线按退避自动重连;
- * 事件回调里只做解析与入队, 涉 VFS 的 I/O 在监听线程执行, 文档重载切到 EDT。
+ * 事件回调里只做解析与入队, 涉 VFS 的 I/O 在读流线程 (或改动线程) 执行,
+ * 文档重载与版本控制刷新切到 EDT; 每轮改动的拉取与落地在该改动线程里串行。
  */
 class DshEditorSync(
     private val project: Project,
@@ -93,6 +103,26 @@ class DshEditorSync(
     /** follow 实时流 (新版 dsh 主通道); null = 尚未创建 */
     private var follow: DshSessionFollow? = null
 
+    /** 每轮改动摘要的落地线程 (单线程串行: 拉摘要 -> 刷 VFS -> 刷版本控制; 不阻塞事件流读线程) */
+    @Volatile
+    private var changeWorker: java.util.concurrent.ExecutorService? = null
+
+    /** 已发出但结果未返回的 git 类命令 (key = sessionId/callId): 结果回来后刷新提交页与提交记录 */
+    private val pendingGitOps = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** 最近一次版本控制全量刷新的时刻 (ms); 读流线程与改动线程都会访问 */
+    @Volatile
+    private var lastVcsRefreshAt = 0L
+
+    /** 最近一次"刷新已打开文档"的时刻 (ms): 对话进行中按间隔合并, 避免每次工具结果都刷一遍 */
+    @Volatile
+    private var lastOpenDocRefreshAt = 0L
+
+    /** 本项目在 dsh 侧的路径 (WSL 模式 /mnt/c/..., Windows 模式 C:/...); 没有项目根时为 null */
+    private val workspaceDshPath: String? by lazy {
+        project.basePath?.let { DshReference.dshPathFromString(it, launchMode) }
+    }
+
     /** 最近一次刷新某路径的时刻 (ms), 用于同路径短窗口去重 */
     private val lastSyncAt = HashMap<String, Long>()
 
@@ -115,6 +145,12 @@ class DshEditorSync(
         reconnectBackoffMs = 0
         follow = null
         pendingCalls.clear()
+        pendingGitOps.clear()
+        lastVcsRefreshAt = 0
+        lastOpenDocRefreshAt = 0
+        changeWorker = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "dsh-plugin-sync-changes").apply { isDaemon = true }
+        }
         val t = Thread({ runLoop() }, "dsh-plugin-editor-sync").apply { isDaemon = true }
         thread = t
         t.start()
@@ -131,6 +167,11 @@ class DshEditorSync(
         try {
             follow?.stop()
             follow = null
+        } catch (_: Throwable) {
+        }
+        try {
+            changeWorker?.shutdownNow()
+            changeWorker = null
         } catch (_: Throwable) {
         }
         try {
@@ -208,10 +249,9 @@ class DshEditorSync(
      */
     private fun startFollow() {
         if (follow != null) return
-        val workspacePath = project.basePath?.let { DshReference.dshPathFromString(it, launchMode) }
         follow = DshSessionFollow(
             port = portProvider(),
-            workspacePath = workspacePath,
+            workspacePath = workspaceDshPath,
             onFollowSetChanged = { sessions ->
                 if (sessions.isNotEmpty()) {
                     onLog(DshBundle.message("sync.log.followActive", sessions.size.toString()))
@@ -240,12 +280,15 @@ class DshEditorSync(
         }
     }
 
-    /** 分发一条会话事件给写入工具识别 (follow 流回调) */
+    /** 分发一条会话事件: 顶层写入工具 / git 命令 / 每轮改动摘要 / 一轮结束 (follow 流回调) */
     private fun handleSessionEvent(sessionId: String, event: JsonObject) {
         val data = event.get("data")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
         when (event.get("type")?.asString) {
             "tool/call" -> onToolCall(sessionId, data)
             "tool/result" -> onToolResult(sessionId, data)
+            "workspace/changes" -> onWorkspaceChanges(sessionId, data, event)
+            // 一轮结束兜底: 只提交、不改工作区文件的 git 操作不会产生改动摘要, 但提交页同样要刷新
+            "turn/end" -> refreshVcs("一轮对话结束")
         }
     }
 
@@ -424,20 +467,29 @@ class DshEditorSync(
         }
     }
 
-    /** 文件写入类工具调用: 记录 callId -> 文件路径, 等 tool/result 成功后刷新 */
+    /**
+     * 顶层工具调用: 写文件工具记下 callId -> 路径 (等结果成功后刷新);
+     * 任何工具的参数里出现 git 变更类命令时也记一笔, 结果回来后刷新 IDE 的提交页/提交记录。
+     */
     private fun onToolCall(sessionId: String, data: JsonObject) {
         val name = data.get("name")?.asString ?: return
         val callId = data.get("callId")?.asString ?: return
-        if (name !in WRITING_TOOLS) {
-            debugLog("工具调用 name=$name (非写入工具, 忽略)")
-            return
-        }
         val argsText = data.get("arguments")?.let { argsElement ->
             when {
                 argsElement.isJsonPrimitive -> argsElement.asString
                 argsElement.isJsonObject -> argsElement.toString() // 新版可能直接给对象, 序列化为 JSON 字符串再解析
                 else -> null
             }
+        }
+        // git 命令可能出现在任何工具里 (代码执行工具/终端工具都会代跑 git), 与是否为写入工具无关
+        if (argsText != null && GIT_COMMAND.containsMatchIn(argsText)) {
+            if (pendingGitOps.size >= MAX_PENDING_GIT_OPS) pendingGitOps.clear()
+            pendingGitOps.add("$sessionId/$callId")
+            debugLog("记录 git 类命令调用 name=$name callId=$callId")
+        }
+        if (name !in WRITING_TOOLS) {
+            debugLog("工具调用 name=$name (非写入工具, 忽略)")
+            return
         }
         if (argsText == null) {
             debugLog("工具调用 name=$name callId=$callId 参数不是字符串: ${data.get("arguments")}")
@@ -466,6 +518,11 @@ class DshEditorSync(
         val source = message.get("source")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
         val callId = source.get("callId")?.asString ?: return
         val key = "$sessionId/$callId"
+        // git 类命令执行完就刷新版本控制视图 (成功失败都刷: 冲突/部分完成同样改变了仓库状态)
+        if (pendingGitOps.remove(key)) refreshVcs("dsh 执行了 git 命令")
+        // 写操作可能发生在代码执行工具内部 (没有顶层的写入事件), 这里按间隔重读已打开的文件,
+        // 让正在查看的编辑器在对话进行中也能跟上; 完整的改动清单在每轮结束时统一同步
+        refreshOpenDocuments()
         val dshPath = synchronized(pendingCalls) { pendingCalls.remove(key) }
         if (dshPath == null) {
             debugLog("工具结果 callId=$callId 无配对调用 (非写入工具或事件丢失), 忽略")
@@ -479,7 +536,7 @@ class DshEditorSync(
             return
         }
         debugLog("工具结果 callId=$callId 成功, 开始同步 $dshPath")
-        syncFileToIde(dshPath)
+        syncFileToIde(dshPath)?.let { DshVcsRefresh.filesChanged(project, listOf(it)) }
     }
 
     /** 当前版本 dsh 的 tool/result 失败标记: message.content[0].isError == true */
@@ -514,19 +571,23 @@ class DshEditorSync(
         return true
     }
 
-    private fun syncFileToIde(dshPath: String) {
+    /**
+     * @param logSync 是否在工具窗口日志里逐个文件提示"已同步 dsh 编辑" (整轮批量同步时由汇总日志代替)
+     * @return 真正刷新过的文件 (供调用方标脏版本控制视图); 跳过或失败返回 null
+     */
+    private fun syncFileToIde(dshPath: String, logSync: Boolean = true): VirtualFile? {
         val ideaPath = ideaPathOf(dshPath)
         if (ideaPath == null) {
             debugLog("路径无法换算为 Windows 路径, 跳过: $dshPath")
-            return
+            return null
         }
         // 同路径短窗口内只刷一次 (同一批写入事件合并) —— 既不刷屏, 也减少 VFS 压力
         if (!shouldRefresh(ideaPath)) {
             debugLog("同路径 $ideaPath 短期已刷新, 合并跳过")
-            return
+            return null
         }
         debugLog("换算为 IDEA 路径: $ideaPath")
-        try {
+        return try {
             val parentPath = ideaPath.substringBeforeLast('/')
             val parent = LocalFileSystem.getInstance().refreshAndFindFileByPath(parentPath)
             var file = LocalFileSystem.getInstance().findFileByPath(ideaPath)
@@ -538,21 +599,157 @@ class DshEditorSync(
             file = LocalFileSystem.getInstance().findFileByPath(ideaPath)
             if (file == null) {
                 debugLog("VFS 中未找到该文件 (可能不在本机或尚未可寻址): $ideaPath (parent=${parent?.path})")
-                return
+                return null
             }
-            if (file.isDirectory) return // 工具参数指向目录 (如 view) 不刷新
+            if (file.isDirectory) return null // 工具参数指向目录 (如 view) 不刷新
             debugLog("VFS 强制刷新完成: ${file.path} (modificationStamp=${file.modificationStamp})")
-            reloadOpenDocument(file)
+            reloadOpenDocument(file, logSync)
+            file
         } catch (t: Throwable) {
             if (running.get()) {
                 debugLog("刷新失败: $ideaPath -> ${t.message}")
                 LOG.warn("sync file to ide failed: $ideaPath", t)
             }
+            null
         }
     }
 
+    // ---------- 每轮改动摘要 (dsh 0.2 起) ----------
+
+    /**
+     * `workspace/changes` 事件: dsh 一轮结束时给出"这一轮改了哪些文件"的摘要。
+     * 事件本身只带轮次号, 文件清单要按事件序号去只读接口取 (见 [DshWorkspaceApi.changeSummary]);
+     * 拉取与刷新都丢到独立线程, 不阻塞事件流读线程。
+     */
+    private fun onWorkspaceChanges(sessionId: String, data: JsonObject, event: JsonObject) {
+        val seq = event.get("seq")?.asLong ?: return
+        val turn = data.get("turn")?.asLong
+        val worker = changeWorker ?: return
+        try {
+            worker.execute { syncTurnChanges(sessionId, seq, turn) }
+        } catch (_: Throwable) {
+            // 线程池已停止 (dsh 停止/面板销毁): 这一轮的同步直接放弃
+        }
+    }
+
+    /**
+     * 拉取该轮改动清单并同步到 IDEA。
+     *
+     * 摘要里的路径相对会话工作目录, 工作目录之外的给绝对路径 —— 统一换算成 IDEA 侧路径后逐个刷新。
+     * 无论清单是否为空都刷新一次版本控制视图: git 操作 (提交/切分支) 可能一个工作区文件都没改,
+     * 但提交页与提交记录必须重新读取仓库状态, 否则用户看到的还是操作前的样子。
+     */
+    private fun syncTurnChanges(sessionId: String, seq: Long, turn: Long?) {
+        if (!running.get() || project.isDisposed) return
+        val summary = DshWorkspaceApi.changeSummary(portProvider(), sessionId, seq)
+        val files = summary?.getAsJsonArray("files")
+        val cwd = follow?.cwdOf(sessionId) ?: workspaceDshPath
+        val changed = ArrayList<VirtualFile>()
+        if (files != null) {
+            for (el in files) {
+                val path = el.takeIf { it.isJsonObject }?.asJsonObject?.get("path")?.asString ?: continue
+                val dshPath = resolveAgainstCwd(cwd, path) ?: continue
+                // 整轮改动只在结束时汇总提示, 不逐个文件刷日志
+                syncFileToIde(dshPath, logSync = false)?.let { changed.add(it) }
+            }
+        }
+        refreshVcs("同步第 ${turn ?: seq} 轮改动")
+        if (files == null) {
+            debugLog("第 ${turn ?: seq} 轮没有改动摘要 (旧版 dsh 或会话已释放), 只刷新版本控制视图")
+        } else if (changed.isNotEmpty()) {
+            onLog(DshBundle.message("sync.log.turnChanges", (turn ?: seq).toString(), changed.size.toString()))
+        }
+    }
+
+    /** 摘要里的相对路径按会话工作目录补全; 已经是绝对路径 (WSL / Windows / UNC) 的直接用 */
+    private fun resolveAgainstCwd(cwdDsh: String?, path: String): String? {
+        val normalized = path.replace('\\', '/')
+        if (normalized.isEmpty()) return null
+        val absolute = normalized.startsWith("/") || WINDOWS_ABSOLUTE.containsMatchIn(normalized)
+        val joined = if (absolute) {
+            normalized
+        } else {
+            val base = cwdDsh?.replace('\\', '/')?.trimEnd('/') ?: return null
+            base + "/" + normalized
+        }
+        return collapseSegments(joined)
+    }
+
+    /**
+     * 折掉路径里的 "." 与 ".." 段: dsh 的摘要对工作目录之上的文件会给 "../x" 这种相对路径,
+     * 而 VFS 只认规范路径 (带 ".." 的路径查不到文件, 父目录也会算错)。
+     * 前导 "/" 与 "//" (UNC) 形态保持不变, 盘符段 ("C:") 不会被 ".." 弹掉。
+     */
+    private fun collapseSegments(path: String): String {
+        val prefix = when {
+            path.startsWith("//") -> "//"
+            path.startsWith("/") -> "/"
+            else -> ""
+        }
+        val segments = ArrayList<String>()
+        for (part in path.split('/')) {
+            when {
+                part.isEmpty() || part == "." -> Unit
+                part == ".." -> {
+                    val last = segments.lastOrNull()
+                    if (last != null && last.length > 2 && !last.endsWith(":")) segments.removeAt(segments.size - 1)
+                    else if (prefix.isEmpty() && last == null) segments.add(part)
+                }
+                else -> segments.add(part)
+            }
+        }
+        return prefix + segments.joinToString("/")
+    }
+
+    /**
+     * 对话进行中的保底刷新: 新版 dsh 的写操作发生在代码执行工具内部, 完整的改动清单要等每轮结束才有;
+     * 工具执行完就按间隔把**已打开的文件**重读一遍, 让正在查看的编辑器在对话进行中也能跟上进度。
+     *
+     * 只刷已打开的文件 (通常个位数): 比全项目扫描便宜得多, 也不会打扰未打开的文件;
+     * 有未保存修改的文件由 [reloadOpenDocument] 跳过, 不会覆盖用户正在编辑的内容。
+     */
+    private fun refreshOpenDocuments() {
+        val now = System.currentTimeMillis()
+        if (now - lastOpenDocRefreshAt < OPEN_DOC_REFRESH_MIN_INTERVAL_MS) return
+        lastOpenDocRefreshAt = now
+        // 已打开文件列表只能在 EDT 上取; 逐个刷新 (磁盘 I/O) 交给改动线程
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed || !running.get()) return@invokeLater
+            val files = try {
+                FileEditorManager.getInstance(project).openFiles
+            } catch (_: Throwable) {
+                return@invokeLater
+            }
+            val worker = changeWorker ?: return@invokeLater
+            try {
+                worker.execute {
+                    if (!running.get() || project.isDisposed) return@execute
+                    for (file in files) {
+                        try {
+                            if (!file.isValid || !file.isInLocalFileSystem) continue
+                            VfsUtil.markDirtyAndRefresh(false, false, true, file)
+                            reloadOpenDocument(file, logSync = false)
+                        } catch (_: Throwable) {
+                        }
+                    }
+                }
+            } catch (_: Throwable) {
+                // 线程池已停止 (dsh 停止/面板销毁): 忽略这次刷新
+            }
+        }
+    }
+
+    /** 刷新 IDE 的版本控制视图 (提交页/提交记录); 连续触发的命令按 [VCS_REFRESH_MIN_INTERVAL_MS] 合并 */
+    private fun refreshVcs(reason: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastVcsRefreshAt < VCS_REFRESH_MIN_INTERVAL_MS) return
+        lastVcsRefreshAt = now
+        debugLog("刷新版本控制视图: $reason")
+        DshVcsRefresh.refreshAll(project)
+    }
+
     /** 打开着的文档: 无未保存修改则确保内容为磁盘新版 (强制刷新已会触发 IDEA 原生自动重载, 这里兜底) */
-    private fun reloadOpenDocument(file: VirtualFile) {
+    private fun reloadOpenDocument(file: VirtualFile, logSync: Boolean = true) {
         ApplicationManager.getApplication().invokeLater {
             if (project.isDisposed || !running.get()) return@invokeLater
             try {
@@ -564,7 +761,7 @@ class DshEditorSync(
                     FileDocumentManager.getInstance().reloadFromDisk(doc)
                 }
                 // 戳相同 = 已由 VFS 变更事件触发 IDEA 原生自动重载 (或内容本就一致), 均视为已同步
-                onLog("已同步 dsh 编辑: ${file.path}")
+                if (logSync) onLog("已同步 dsh 编辑: ${file.path}")
             } catch (t: Throwable) {
                 debugLog("重载文档异常: ${t.message}")
             }
@@ -592,5 +789,26 @@ class DshEditorSync(
             "edit", "tool:edit", // 新版 edit 工具 (参数 file_path)
             "write", "tool:write", // 新建/覆写文件 (参数 file_path)
         )
+
+        /**
+         * git 变更类命令 (参数里出现即视为 dsh 动了仓库)。
+         * 只认会改变工作区或仓库状态的子命令: 提交/切换/暂存/拉取等, 不是所有 git 调用。
+         * dsh 常在代码执行工具或终端工具里跑 git, 因此对**所有工具**都做这个判断。
+         */
+        private val GIT_COMMAND = Regex(
+            """\bgit\s+(add|am|apply|branch|checkout|cherry-pick|clean|clone|commit|fetch|init|merge|mv|pull|push|rebase|reset|restore|revert|rm|stash|switch|tag|worktree)\b"""
+        )
+
+        /** 待返回的 git 命令上限: 事件丢失时防止集合无限增长 */
+        private const val MAX_PENDING_GIT_OPS = 512
+
+        /** 版本控制视图全量刷新的最小间隔 (ms): 一条命令里可能连续跑好几个 git 子命令 */
+        private const val VCS_REFRESH_MIN_INTERVAL_MS = 1500L
+
+        /** 对话进行中刷新已打开文档的最小间隔 (ms): 工具结果很密集, 合并成几次刷新即可 */
+        private const val OPEN_DOC_REFRESH_MIN_INTERVAL_MS = 3000L
+
+        /** 摘要里的 Windows 盘符路径 (反斜杠已归一化成斜杠) */
+        private val WINDOWS_ABSOLUTE = Regex("^[A-Za-z]:/")
     }
 }

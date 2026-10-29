@@ -7,7 +7,7 @@ no terminal or separate browser needed.
 
 **English**
 
-**Version support**: dsh **0.1.0-rc.8 or later** (the latest **0.1.2-rc.1** is fully supported)
+**Version support**: dsh **0.1.0-rc.8 or later** (the latest **0.2.x** is fully supported)
 
 1. **One-click start of dsh**: Click the whale icon in the right tool window bar to open the Dsh Dock
    tool window and start the DeepSeek Harness assistant (`dsh web`) with one click; the WebUI is shown
@@ -26,9 +26,10 @@ no terminal or separate browser needed.
    and page state never leak between windows; closing a window stops the dsh that belongs to it
 6. **Right-click references**: Send the selected code or file to the Dsh input box as a `@path`
    reference with one click, so the assistant can read the file when needed
-7. **Auto-refresh after dsh edits**: Live-listens to dsh's session events; when a file-writing
-   tool (Edit / write, etc.) completes successfully, the file's VFS is refreshed and any open
-   editors update to the new content immediately — no more stale code or reopening files
+7. **Auto-refresh after dsh edits**: Live-listens to dsh's session events, so every edit shows up —
+   whether dsh writes the file directly or through a script it runs — and any open editors update to
+   the new content immediately, with no stale code or reopening files. Git operations count too:
+   once dsh commits, switches branches and so on, the IDE's commit page and history refresh as well
 8. **File paths open in the IDE**: Clicking a file path in the dsh WebUI opens it in the IDE
    editor — jumping to the line or the edited content when dsh knows it — instead of the dsh sidebar preview
 9. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar — and switching to another
@@ -44,7 +45,7 @@ no terminal or separate browser needed.
 DeepSeek Harness（dsh）JetBrains IDE 插件（IntelliJ IDEA / PyCharm / WebStorm 等）：一键启动 `dsh web` AI 助手，在 IDE 内置浏览器中直接与
 DeepSeek 模型对话，无需终端、无需另开浏览器。
 
-**版本支持**：dsh **0.1.0-rc.8 及以上**（对最新 **0.1.2-rc.1** 完整支持）
+**版本支持**：dsh **0.1.0-rc.8 及以上**（对最新 **0.2.x** 完整支持）
 
 1. **一键启动 dsh**：点击右侧工具栏的鲸鱼图标，打开 Dsh Dock 工具窗口并一键启动 DeepSeek Harness（`dsh web`），
    WebUI 直接显示在工具窗口内置的浏览器面板中，无需离开 IDE 即可与 DeepSeek 模型对话
@@ -58,8 +59,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    被占用时自动顺延），刷新页面、工作空间、会话与页面状态在窗口之间完全互不影响；
    关闭某个项目窗口时，属于它的 dsh 会一并停止
 6. **右键发送代码/文件**：选中的代码或文件可一键以 `@路径` 引用发送到 Dsh 输入框，方便模型按需读取
-7. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，文件写入工具（Edit / write 等）成功执行后
-   自动刷新 VFS 并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件
+7. **dsh 编辑后自动刷新**：实时监听 dsh 会话事件，无论 dsh 是直接写文件还是通过脚本批量改动，
+   都会自动刷新对应文件并即时更新已打开的编辑器，不再显示旧代码、无需重新打开文件；
+   dsh 完成 git 操作（提交、切换分支等）后，IDE 的提交页与提交记录也会自动刷新
 8. **文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径时在 IDE 编辑器中打开（能定位到行号或编辑内容），
    不再使用 dsh 侧边栏预览；打不开时仍走 dsh 预览
 9. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时（以及之后切换工作空间/会话时），自动定位到当前会话，
@@ -75,8 +77,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 
 ## 功能
 
-- **支持最新版 dsh（0.1.2-rc.1）**：完整兼容 dsh 最新版的安全认证、重构后的接口与实时文件同步通道，
-  开箱即用；旧版 dsh（0.1.0-rc.8 及以上）同样兼容
+- **支持最新版 dsh（0.2.x）**：完整兼容 dsh 最新版的安全认证、重构后的接口、实时文件同步通道与
+  提交页刷新，开箱即用；旧版 dsh（0.1.0-rc.8 及以上）同样兼容
 - **右侧工具栏鲸鱼图标**：安装后在右侧工具栏出现黑色的 dsh 鲸鱼图标，点击即可打开 Dsh Dock 工具窗口
 - **双启动方式（设置可选）**：
   - **WSL 中启动**：通过 `wsl.exe` 在 WSL 里运行 dsh（参考 `ldsh.cmd` 的启动思路），
@@ -110,9 +112,11 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   加载后若发现落在别的项目上会自动切回（点开本项目会话，必要时才刷新）
 - **主题/语言**：WebUI 主题跟随 IDE（暗色 IDE 自动深色）；语言可选跟随 IDE/浏览器、简体中文或 English
   （跟随模式下按 IDE 界面语言自动同步 dsh 语言偏好：英文 IDE 显示英文 WebUI，中文 IDE 显示中文 WebUI）
-- **dsh 编辑后自动刷新**：dsh 的文件写入类工具（Edit / str_replace_editor / write 等）成功执行完时，
-  自动刷新对应文件的 VFS 并把已打开的编辑器立即更新为新代码（WSL 模式下 Windows 侧收不到文件变更
-  通知的老问题也一并解决）；有未保存修改的文件不会被覆盖；默认开启，可在设置中关闭
+- **dsh 编辑后自动刷新**：dsh 改完文件就把已打开的编辑器更新为新代码（WSL 模式下 Windows 侧收不到
+  文件变更通知的老问题也一并解决）—— 直接写文件、通过脚本批量改动、跑命令改文件都能同步；
+  有未保存修改的文件不会被覆盖；默认开启，可在设置中关闭
+- **Git 操作后刷新提交页**：dsh 完成提交、切换分支、拉取等 git 操作后，IDE 的提交页（Local Changes）
+  与提交记录自动刷新，不必手动切窗口或点刷新
 - **点击文件路径在 IDE 中打开**：点击 dsh WebUI 里的文件路径（含文件提及、「打开」按钮）时在 IDE 编辑器中打开，
   能定位行号或编辑新增内容；打不开时自动回退为 dsh 侧边栏预览。默认开启，可在设置中关闭
 - **打开即空白新会话（默认）**：每次打开 Dsh Dock 都停在当前项目的一个空白新会话上，不复用上次的对话；
@@ -184,7 +188,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 | Windows 附加参数 | Windows 模式下追加到 `dsh web` 后的参数（如 `--host 0.0.0.0`） | 空 |
 | 自动启动 | 启动时机：IDEA 启动时（默认，含内嵌浏览器预热）/ 打开工具窗口时 / 手动启动 | IDEA 启动时 |
 | 同时打开系统浏览器 | WebUI 就绪后额外用系统浏览器打开 | 关闭 |
-| 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（实时监听 dsh 会话事件，写入成功即刷新） | 开启 |
+| 自动刷新编辑器 | dsh 编辑文件后自动刷新 VFS 与已打开的编辑器（实时监听 dsh 会话事件，写入成功即刷新）；git 操作后同时刷新提交页与提交记录 | 开启 |
 | 点击文件路径在 IDE 中打开 | 点击 WebUI 里的文件路径时在 IDE 编辑器中打开该文件 | 开启 |
 | 打开时恢复上次会话 | 关闭：每次打开 Dsh Dock 都停在当前项目的一个**空白新会话**上，不复用上次的对话（历史会话仍可从侧边栏点开）；打开：恢复上次打开的会话（dsh 默认行为） | 关闭 |
 | WebUI 主题跟随 IDE | 暗色 IDEA 时内嵌 WebUI 自动使用深色主题 | 开启 |
@@ -240,10 +244,17 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   新版 dsh（0.1.2+）走 **session/follow 实时监听通道**（remote.mux WebSocket 长连接，事件级即时推送），
   并且**只订阅本项目工作空间里的活跃会话**（dsh 为每条订阅都要加载并常驻保留该会话的日志，
   历史会话成百上千时全量订阅会把 dsh 拖慢、连累界面加载），
-  旧版（0.1.0-rc.8+）用 events.mux 事件流。在 `tool/call` 事件中登记文件写入类工具
-  （str_replace_editor / edit / write 等）的调用与文件路径，`tool/result` 事件确认工具**成功**
-  （非错误）后把路径换算回 Windows 侧（`/mnt/c/...` -> `C:/...`），定向刷新该文件的 VFS 并
-  重载编辑器中无未保存修改的文档；失败的工具调用不刷新，同一文件短期内的多次写入合并为一次刷新
+  旧版（0.1.0-rc.8+）用 events.mux 事件流。刷新分两条信号：
+  - **顶层写入工具**：`tool/call` 登记、`tool/result` 确认成功后刷新该文件；同一文件短期内的
+    多次写入合并为一次刷新，失败的工具调用不刷新
+  - **每轮改动摘要**（dsh 0.2+）：模型改为在代码执行工具里调用写入工具，写操作不再产生顶层事件，
+    因此改为在每轮结束时读取 dsh 给出的改动清单（直接写文件、脚本和命令改的文件都在内）逐个刷新；
+    路径换算回 Windows 侧（`/mnt/c/...` -> `C:/...`），并重载编辑器中无未保存修改的文档
+  - **对话进行中**：每轮结束才有完整清单，因此工具执行期间按 3 秒间隔重读**已打开的文件**，
+    正在查看的编辑器无需等对话结束即可看到最新代码
+- **Git 操作后刷新提交页**：dsh 在终端/脚本里跑 git 时，插件识别变更类命令（提交、切换分支、暂存、
+  拉取等），命令结束后通知 IDE 的版本控制视图重算：提交页重扫脏文件，提交记录重新读取仓库状态
+  （`.git` 目录一并刷新）；每轮对话结束也会兜底刷新一次，因此「只提交、没改文件」的操作同样即时可见
 - **只停自己启动的 dsh**：WSL 模式启动时把 dsh 的真实 PID 写入标识文件（`dsh-owner-*.pid`），
   停止/退出清理时 `kill` 该 PID；Windows 模式 `taskkill` 本插件持有的进程树。
   **外部启动的同端口 dsh（如手动 `ldsh.cmd`）绝不会被误杀**
@@ -276,6 +287,8 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **右键发送后输入框没有出现引用**：确认 JCEF 内嵌浏览器可用（工具窗口中间显示的是 WebUI 页面）；
   若 WebUI 尚未加载完成，引用会等页面就绪后自动补发；仍不行就刷新一次 WebUI 再试
 - **dsh 编辑文件后 IDEA 没有自动更新**：确认 `Settings -> Other Settings -> Dsh Dock` 中
-  「dsh 编辑文件后自动刷新编辑器」已开启，且工具窗口日志出现过「已建立实时文件同步监听」；
-  旧版 dsh 走兼容的事件流通道。仍不同步时可手动 `Ctrl+Alt+Y` 同步
-  或重新打开文件；另外，文件在 IDEA 里有**未保存修改**时不会被自动覆盖（这是防丢改动的保护）
+  「自动刷新编辑器」已开启，且工具窗口日志出现过「已建立实时文件同步监听」；
+  dsh 0.2 起，对话进行中会持续刷新**已打开的文件**，其余文件与提交页在每轮结束时统一同步
+  （日志里会出现「已同步第 N 轮改动」），长对话进行中请稍候。旧版 dsh 走兼容的事件流通道；
+  仍不同步时可手动刷新一次 WebUI 或重新打开文件；另外，文件在 IDEA 里有**未保存修改**时
+  不会被自动覆盖（这是防丢改动的保护）
