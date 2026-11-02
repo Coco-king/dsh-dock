@@ -1,38 +1,14 @@
 # Changelog / 变更日志
 
-## [1.4.2] - 2026-10-29
+## [1.4.3] - 2026-11-02
 
 ### 中文 (Chinese)
 
-- **修复（Fixed）**：在 dsh 里点击文件路径打开时，编辑器定位现在只作用于目标文件本身（分屏等少数场景下此前可能落到别的编辑器），行为与 1.4.0 保持一致
+- **新增（Added）**：dsh 完成 git 操作（提交、切换分支、拉取等）后，IDE 的提交页与提交记录自动刷新，不必再手动刷新或切换窗口
 
 ### English
 
-- **Fixed**: Opening a file path from dsh now positions the editor of that exact file only (in rare split-editor cases the previous build could target another editor), matching the 1.4.0 behaviour
-
-## [1.4.1] - 2026-10-29
-
-### 中文 (Chinese)
-
-- **修复（Fixed）**：兼容 IntelliJ IDEA 2026.3 等新版 IDE——此前在这些版本上插件会因接口缺失而无法加载，现在可以正常启用
-- **修复（Fixed）**：替换一处已废弃的编辑器打开方式，消除新版 IDE 的弃用告警
-
-### English
-
-- **Fixed**: Compatibility with IntelliJ IDEA 2026.3 and other recent IDEs — the plugin used to fail loading there because of a missing API; it now installs and runs normally
-- **Fixed**: Replaced a deprecated way of opening editors, clearing the deprecation warning newer IDEs reported
-
-## [1.4.0] - 2026-10-29
-
-### 中文 (Chinese)
-
-- **修复（Fixed）**：升级到最新版 dsh 后，dsh 编辑代码时 IDE 里的文件又不再自动刷新了——现在编辑结束就能看到最新内容，无需重新打开文件
-- **新增（Added）**：dsh 完成 git 操作（提交、切换分支、拉取等）后，IDE 的提交页与提交记录会自动刷新，不必再手动切窗口或点刷新
-
-### English
-
-- **Fixed**: After upgrading to the latest dsh, files edited by dsh stopped refreshing in the IDE again — the latest content now shows up as soon as the edit is done, with no need to reopen files
-- **Added**: The IDE's commit page and commit history now refresh automatically once dsh finishes git operations (commit, branch switch, pull and so on) — no more switching windows or hitting refresh
+- **Added**: The IDE's commit page and commit history refresh automatically once dsh finishes git operations (commit, branch switch, pull and so on), with no manual refresh or window switching needed
 
 ## [1.3.0] - 2026-10-12
 
