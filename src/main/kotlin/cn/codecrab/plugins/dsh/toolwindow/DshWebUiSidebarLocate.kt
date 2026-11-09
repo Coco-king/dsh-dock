@@ -402,6 +402,7 @@ object DshWebUiSidebarLocate {
         |  var lastSection = null;
         |
         |  function tick() {
+        |    watchSessionForRedraw();
         |    // 落地纠正优先: 即使侧边栏列表没打开 (折叠成 rail) 也要核对当前会话
         |    ensureLanding(sessionList());
         |    var list = sessionList();
@@ -431,6 +432,26 @@ object DshWebUiSidebarLocate {
         |    mark(section);
         |  }
         |
+        |  // 会话切换后 Chromium 的离屏渲染偶尔只更新脏区, 会留下上一屏的残影 (鼠标扫过才刷新一块)。
+        |  // 跟着 dsh 持久化的"当前会话"变化轻推一次合成层, 强制整页重绘; 从隐藏变可见时也推一次。
+        |  var lastSessionId = null;
+        |  function nudgeRedraw() {
+        |    try {
+        |      var root = document.documentElement;
+        |      var old = root.style.opacity;
+        |      root.style.opacity = "0.999";
+        |      requestAnimationFrame(function () { try { root.style.opacity = old; } catch (e) {} });
+        |    } catch (e) {}
+        |  }
+        |  function watchSessionForRedraw() {
+        |    try {
+        |      var raw = localStorage.getItem("dsh.sessions.current");
+        |      var id = raw ? JSON.parse(raw).sessionId : null;
+        |      if (lastSessionId !== null && id !== lastSessionId) nudgeRedraw();
+        |      lastSessionId = id;
+        |    } catch (e) {}
+        |  }
+        |
         |  var scheduled = null;
         |  function schedule(delay) {
         |    if (scheduled !== null) return;
@@ -448,7 +469,7 @@ object DshWebUiSidebarLocate {
         |  setInterval(tick, TICK_MS);
         |  // 工具窗口/页面从隐藏变可见 (CEF 切换可见性) 时按"重新打开"处理
         |  document.addEventListener("visibilitychange", function () {
-        |    if (document.visibilityState === "visible") { wasOpen = false; schedule(DEBOUNCE_MS); }
+        |    if (document.visibilityState === "visible") { wasOpen = false; nudgeRedraw(); schedule(DEBOUNCE_MS); }
         |  });
         |  // 用户自己动过手 (真鼠标/键盘) 就不再自动纠正落地: 免得和"用户主动切到别的项目"打架
         |  document.addEventListener("pointerdown", function () { userTouched = true; }, true);

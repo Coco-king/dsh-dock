@@ -35,6 +35,38 @@ object DshJcefSupport {
     }
 
     /**
+     * 让浏览器整页重画一帧 (CEF 的 `Invalidate(PET_VIEW)`)。
+     *
+     * JCEF 是离屏渲染: CEF 把画面画到缓冲区, Swing 组件再贴出来。窗口被切走/最小化、或页面内容
+     * 整块替换 (如 WebUI 里新建会话) 后, 缓冲区里没被整屏标记失效时就会留下上一屏的残影 ——
+     * 鼠标扫过才刷新一小块, 看起来就是"花屏"。这里显式请求整屏失效, 让 CEF 重画。
+     *
+     * `CefBrowser.invalidate()` 是较新 JCEF 才有的方法 (2024.2 的编译 SDK 里没有), 因此用反射调用:
+     * 没有这个方法的老版本退化为只重绘 Swing 组件, 不会因找不到方法而报错。
+     */
+    fun invalidate(browser: com.intellij.ui.jcef.JBCefBrowser) {
+        try {
+            val cef = browser.cefBrowser
+            cef.javaClass.getMethod("invalidate").invoke(cef)
+        } catch (_: Throwable) {
+        }
+        try {
+            browser.component?.repaint()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** 稍后整页重画: 刚重新显示/刚加载完成时立刻重画, 新帧往往会被旧帧盖回去, 隔一小会儿更稳 */
+    fun invalidateSoon(browser: com.intellij.ui.jcef.JBCefBrowser, delayMs: Int = 120) {
+        try {
+            val timer = javax.swing.Timer(delayMs) { invalidate(browser) }
+            timer.isRepeats = false
+            timer.start()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /**
      * 立刻把内嵌浏览器的原生实体建起来, 不等组件"可见/首次绘制"。
      *
      * 背景: JCEF 默认**懒创建**浏览器实体 —— 组件被加进可见窗口、第一次绘制时才真正创建,

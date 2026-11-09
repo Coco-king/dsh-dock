@@ -34,6 +34,7 @@ import org.cef.network.CefRequest
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Dimension
+import java.awt.event.HierarchyEvent
 import java.awt.FlowLayout
 import javax.swing.BorderFactory
 import javax.swing.Box
@@ -395,6 +396,7 @@ class DshToolWindowPanel(
         jbClient.addLoadHandler(createInjectLoadHandler(), b.cefBrowser)
         jcefAvailable = true
         browser = b
+        watchBrowserRepaint(b)
         // 跨版本注册浏览器销毁钩子 (旧版 IDE 没有新包名的 Disposer)
         if (!DshDisposer.register(parentDisposable, b)) {
             appendLog(DshBundle.message("log.browserDisposeWarn"))
@@ -442,6 +444,7 @@ class DshToolWindowPanel(
             return null
         }
         browser = b
+        watchBrowserRepaint(b)
         jcefAvailable = true
         // 沿用预热时建立的 JS 通道 (浏览器实体已创建, 此时无法再新建可用的通道)
         fileOpenChannel = warmed.fileOpenChannel
@@ -553,6 +556,31 @@ class DshToolWindowPanel(
      * 页面脚本注入 (页面加载完成 / 接管已加载的预热页面时调用, 重复调用幂等):
      * 「点击文件路径在 IDE 中打开」的点击拦截 + 侧边栏会话列表定位。
      */
+
+    /**
+     * 关注浏览器组件的"重新显示": 从别的工具窗口/最小化切回来时整屏重画一次。
+     *
+     * JCEF 离屏渲染在组件隐藏期间可能不再出帧, 回来时 Swing 只贴旧缓冲区 -> 残影/花屏,
+     * 鼠标扫过才局部刷新。重新显示时显式请求整页重绘可以一次性修好。
+     */
+    private fun watchBrowserRepaint(b: JBCefBrowser) {
+        try {
+            val component = b.component ?: return
+            component.addHierarchyListener { event ->
+                if ((event.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong()) != 0L && component.isShowing) {
+                    // 重新显示时再声明一次"窗口可见" (隐藏期间 CEF 可能被当成不可见而停止出帧),
+                    // 然后请求整页重绘: 否则 Swing 贴出的还是隐藏前的旧缓冲区
+                    try {
+                        b.cefBrowser.setWindowVisibility(true)
+                    } catch (_: Throwable) {
+                    }
+                    DshJcefSupport.invalidateSoon(b, 100)
+                }
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun installPageScripts() {
         val b = browser ?: return
         fileOpenChannel?.install(b, project)
@@ -565,6 +593,8 @@ class DshToolWindowPanel(
             newSessionMode = !settings.restoreLastSession,
             onLog = ::appendLog,
         )
+        // 页面内容整块换过 (加载完成/接管) 时整屏重画一次, 避免留下上一屏残影
+        DshJcefSupport.invalidateSoon(b)
     }
 
     // ---------- 引用注入 (右键菜单发送) ----------

@@ -7,12 +7,14 @@
 - **变更（Changed）**：多窗口改版：一个 IDE 只运行一个 dsh，每个窗口有自己的页面端口（页面状态仍互不影响），启动更快、占用更省；状态栏同时显示“页面端口 / 进程端口”，点“停止”会停掉整个 IDE 的 dsh
 - **修复（Fixed）**：多窗口下工作空间相关的三处问题一并修好：同步经常失败、页面偶尔显示成别的项目的工作空间、对话偶尔掉进“未分组” —— 每个项目现在固定用自己的页面端口，工作空间与会话只由一个 dsh 写入，不再互相覆盖
 - **修复（Fixed）**：工具窗口日志只显示本窗口自己的启动过程，不再混入其他项目窗口；日志里的启动令牌打码显示
+- **修复（Fixed）**：切回工具窗口、或新建会话后页面偶尔留下上一屏的残影（“花屏”，鼠标扫过才刷新一小块）—— 页面重新显示/加载完成时会整页重绘一次，会话切换时也会强制刷新一次画面
 
 ### English
 
 - **Changed**: Multi-window rework: one dsh per IDE with a page port per window (page state stays independent) for faster startup and a lower footprint; the status bar shows both the page port and the process port, and "Stop" stops the dsh of the whole IDE
 - **Fixed**: Three multi-window workspace problems are gone: sync frequently failed, a window occasionally opened on another project's workspace, and conversations occasionally dropped into "Ungrouped" - every project keeps its own page port and one dsh is the only writer of workspaces and sessions
 - **Fixed**: The tool window log only shows this window's own startup and no longer mixes in other project windows; the launch token is masked in the log
+- **Fixed**: The page could keep stale pixels from the previous screen after switching back to the tool window or starting a new session (garbled areas that only repainted on hover) - the page now repaints fully when it is shown or finishes loading, and a redraw is forced when the session changes
 
 ## [1.4.3] - 2026-11-02
 
