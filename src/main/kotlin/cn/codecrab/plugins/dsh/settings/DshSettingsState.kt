@@ -21,7 +21,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     var launchMode: String = MODE_WINDOWS
 
     /** WSL 模式: 起始端口 (默认与官方 dsh web 端口一致); 多个 IDE 窗口同时打开时, 第一个窗口用它,
-     *  其他窗口自动顺延到下一个空闲端口 (每个窗口一个独立的 dsh 实例) */
+     *  其他窗口自动顺延到下一个空闲端口 (每个窗口一个独立的页面端口, 背后共用一个 dsh 进程) */
     var wslPort: Int = WSL_DEFAULT_PORT
 
     /** WSL 模式: 追加到 `dsh web` 后的附加参数 */
@@ -62,7 +62,7 @@ class DshSettingsState : PersistentStateComponent<DshSettingsState> {
     var forceLocale: String = ""
 
 
-    /** 指定启动方式的起始端口 (各窗口实例的分配基准, 见 DshServers.allocatePort) */
+    /** 指定启动方式的起始端口 (各窗口的转发端口与 dsh 进程端口的分配基准, 见 DshServers) */
     fun portFor(mode: String): Int = if (mode == MODE_WSL) wslPort else windowsPort
 
     /** 指定启动方式对应的附加参数 */

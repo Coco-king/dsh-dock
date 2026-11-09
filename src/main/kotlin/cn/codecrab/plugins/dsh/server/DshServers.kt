@@ -2,6 +2,7 @@ package cn.codecrab.plugins.dsh.server
 
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.util.WslSupport
+import cn.codecrab.plugins.dsh.workspace.DshWorkspaceApi
 import com.intellij.ide.AppLifecycleListener
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
@@ -9,19 +10,16 @@ import com.intellij.openapi.project.Project
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 「每个 IDE 窗口一个 dsh 实例」的注册表与端口分配器 (应用级单例)。
+ * 窗口门面 [DshServer] 的注册表 + 端口分配器 (应用级单例)。
  *
- * 为什么每个窗口要各起一个 dsh: dsh 的"当前工作空间/当前会话"只存在于浏览器
- * localStorage 的 dsh.sessions.current 里, 而 localStorage 按 **origin (scheme+host+port)**
- * 隔离 —— 多个窗口共用一个端口时, 所有窗口共用同一份选择: 任一窗口刷新/切换都会改写它,
- * 其他窗口的页面脚本发现"自己不在该在的会话上"就跟着重载, 最后全落到同一个页面。
- * 每个窗口各用一个端口 (各自一个 dsh 进程) 后, origin 不同, localStorage 与认证 cookie
- * 天然隔离, 窗口之间彻底互不影响。
+ * 多窗口架构 (见 [DshHost] 与 [DshPortRelay]): 一个 IDE 只跑一个 dsh 进程,
+ * **进程端口**由 [allocateProcessPort] 分配 (避开所有窗口的转发端口),
+ * **转发端口**由 [allocateRelayPort] 按项目分配 (页面 origin, 决定页面状态隔离)。
  *
  * 本对象负责三件事:
- *  1. 登记各窗口的 [DshServer] 实例 (端口分配时互相避让);
- *  2. 分配端口: 从起始端口 (设置项) 开始只挑**空闲**端口, 已有 dsh 在监听的端口一律跳过;
- *  3. IDE 退出时统一清理所有由本插件启动的 dsh (关窗清理由 [DshServer.dispose] 负责)。
+ *  1. 登记各窗口的门面实例 (端口分配时互相避让);
+ *  2. 分配端口: 转发端口从设置里的起始端口开始挑空闲的, 进程端口避开它们;
+ *  3. 最后一个窗口关闭 / IDE 退出时停掉共用 dsh。
  */
 object DshServers {
 
@@ -38,15 +36,36 @@ object DshServers {
      */
     private const val PORT_PROBE_LIMIT = 8
 
-    /** 项目 -> 实例 (应用级注册表: 各窗口各自的实例都登记在这里, 供端口分配与退出清理使用) */
+    /** 项目 -> 窗口门面 (应用级注册表: 各窗口的实例都登记在这里, 供端口分配与退出清理使用) */
     private val instances = ConcurrentHashMap<Project, DshServer>()
 
     /**
-     * 项目路径 -> 上次分配的端口 (仅本次 IDE 会话内记忆)。
-     * 关窗再开时优先复用同一个端口: 页面 origin 稳定, 该窗口的历史页面状态 (localStorage)
-     * 仍然属于同一个项目, 不会出现"这个窗口的 origin 换成了别的项目"的错位。
+     * 项目路径 -> 页面端口 (本次 IDE 会话内记忆; 关窗再开时优先复用同一个端口)。
      */
-    private val lastPortByPath = ConcurrentHashMap<String, Int>()
+    private val lastRelayPortByPath = ConcurrentHashMap<String, Int>()
+
+    /**
+     * 项目路径 -> 页面端口 (**跨 IDE 会话**持久化), 见 [pickRelayPort]。
+     *
+     * 为什么必须持久化: 页面端口就是页面的 origin, 而浏览器的"当前工作空间/会话"存在按 origin
+     * 隔离的本地存储里。端口每次都重新分配时, 同一个 origin 会在不同项目之间轮转 —— 某个项目的
+     * 窗口会先恢复出**别人**项目存下的会话, 看起来就是"窗口显示成别的项目的工作空间"。
+     * 记住每个项目自己的端口后, 它每次打开都回到自己那份页面状态。
+     */
+    private var pagePortByPath: MutableMap<String, Int>? = null
+
+    /** 持久化页面端口的存储键 (一个 JSON 对象, 见 [loadPagePorts]) */
+    private const val PAGE_PORTS_KEY = "dsh.pagePorts"
+
+    /** 页面端口记忆的容量上限 (超过就丢最早的, 避免路径越攒越多) */
+    private const val PAGE_PORTS_LIMIT = 40
+
+    /** 端口分配互斥 (多个窗口可能同时创建门面) */
+    private val allocationLock = Any()
+
+    /** 本次 IDE 会话用过的进程端口 (重启时优先复用, 少一次扫描) */
+    @Volatile
+    private var lastProcessPort = 0
 
     init {
         // 1) IDEA 退出流程早期回调 (服务仍可用); 异步清理, 不阻塞退出
@@ -61,83 +80,176 @@ object DshServers {
             )
         } catch (_: Throwable) {
         }
-        // 2) JVM shutdown hook 兜底 (各实例自己的退出看门狗还会兜最后一层)
+        // 2) JVM shutdown hook 兜底 (进程自己的退出看门狗还会兜最后一层)
         Runtime.getRuntime().addShutdownHook(Thread({ stopAll() }, "dsh-plugin-shutdown"))
     }
 
-    /** 实例创建时登记 */
+    /** 窗口门面创建时登记 */
     fun register(project: Project, server: DshServer) {
         instances[project] = server
     }
 
-    /** 项目关闭时注销 */
+    /**
+     * 窗口关闭: 注销门面; 最后一个窗口走掉时停掉共用 dsh
+     * (否则关掉所有窗口后还会留一个 node 进程)。
+     */
     fun unregister(project: Project) {
         instances.remove(project)
+        if (!instances.isEmpty()) return
+        // 最后一个窗口走了: 正在启动/已运行则走正常停止流程 (会有日志), 否则清掉残留的进程标识
+        when (DshHost.state) {
+            DshState.STARTING, DshState.RUNNING -> DshHost.stop()
+            else -> DshHost.stopForExit()
+        }
     }
 
+    /** 当前各窗口的转发端口 (进程端口分配时避让) */
+    fun relayPorts(): Set<Int> = instances.values.asSequence()
+        .map { it.port }
+        .filter { it in 1..65535 }
+        .toHashSet()
+
     /**
-     * 为一个窗口实例分配一个**空闲**端口 (从设置里的起始端口开始, 逐个跳过已被占用的端口)。
-     *
-     * 关键取舍: **端口上已有 dsh 时也不复用**, 一律另找一个空闲端口自己启动 ——
-     * 复用别人的 dsh 就等于和那个实例共用页面状态 (工作空间/会话/浏览器本地存储),
-     * 正是"窗口之间互相串、跟着一起刷新"的来源; 每个窗口都用自己启动的实例, 才谈得上互相独立。
+     * 给一个窗口分配转发端口 (页面 origin)。
      *
      * 规则:
-     *  1. 本项目本次会话用过的端口, 若当前空闲则继续用 (页面 origin 稳定, 历史页面状态不串项目);
+     *  1. 本项目本次会话用过的端口, 若当前空闲则继续用 (页面 origin 稳定);
      *  2. 起始端口空闲就用它;
-     *  3. 否则往上找第一个空闲端口 (探测次数有上限, 见 [PORT_PROBE_LIMIT]);
+     *  3. 否则往上找第一个空闲端口 (跳过其他窗口的转发端口与 dsh 进程端口);
      *  4. 都不可用返回 -1, 由调用方提示用户换起始端口或先停掉占用端口的进程。
      */
-    fun allocatePort(self: DshServer): Int {
+    fun allocateRelayPort(self: DshServer): Int = synchronized(allocationLock) { pickRelayPort(self, 0) }
+
+    /** 重新分配转发端口 (绑定失败时换一个, [excluded] 是刚失败的端口) */
+    fun reallocateRelayPort(self: DshServer, excluded: Int): Int =
+        synchronized(allocationLock) { pickRelayPort(self, excluded) }
+
+    private fun pickRelayPort(self: DshServer, excluded: Int): Int {
         val base = DshSettingsState.getInstance().currentPort()
-        if (base !in 1..65535) return -1 // 起始端口配置无效: 由启动流程提示用户检查设置
-        val taken = reservedPorts(self)
+        if (base !in 1..65535) return -1
+        val taken = instances.values.asSequence()
+            .filter { it !== self }
+            .map { it.port }
+            .filter { it in 1..65535 }
+            .toMutableSet()
+        // 进程端口也不能拿来当转发端口 (否则浏览器的请求会打到 dsh 自身而不是转发器)
+        if (DshHost.port in 1..65535) taken.add(DshHost.port)
+        if (excluded in 1..65535) taken.add(excluded)
         val path = self.projectPath
-        // 1) 复用本项目上次的端口 (空闲时): 关窗重开后 origin 不变
-        val prev = path?.let { lastPortByPath[it] }
+        // 1) 复用本项目记下的页面端口 (跨 IDE 会话): origin 稳定, 页面历史状态始终属于本项目
+        val prev = path?.let { pagePortsLocked()[it] ?: lastRelayPortByPath[it] }
         if (prev != null && prev in 1..65535 && prev !in taken && !WslSupport.isPortOpen(prev)) {
-            return prev
+            return rememberRelay(path, prev)
         }
-        // 2) 起始端口 (空闲才用; 已被监听 = 已有 dsh 在用, 不复用, 继续往下找)
-        if (base in 1..65535 && base !in taken && !WslSupport.isPortOpen(base)) {
-            return remember(path, base)
-        }
+        // 2) 起始端口
+        if (base !in taken && !WslSupport.isPortOpen(base)) return rememberRelay(path, base)
+        // 3) 往上找第一个空闲端口 (先跳过被监听/被占用的, 探测次数有上限)
         val limit = minOf(base + PORT_SCAN_LIMIT, 65535)
-        // 3) 往上找第一个空闲端口, 自己拉起一个独立的 dsh (只挑没人监听的端口)
         var probed = 0
         for (p in (base + 1)..limit) {
             if (p in taken) continue
             if (probed++ >= PORT_PROBE_LIMIT) break
-            if (!WslSupport.isPortOpen(p)) return remember(path, p)
+            if (!WslSupport.isPortOpen(p)) return rememberRelay(path, p)
         }
-        LOG.warn("no free port from " + base + " within " + PORT_SCAN_LIMIT + " ports")
+        LOG.warn("no free relay port from " + base + " within " + PORT_SCAN_LIMIT + " ports")
         return -1
     }
 
-    private fun remember(path: String?, port: Int): Int {
-        if (path != null) lastPortByPath[path] = port
+    private fun rememberRelay(path: String?, port: Int): Int {
+        if (path != null) {
+            lastRelayPortByPath[path] = port
+            val ports = pagePortsLocked()
+            if (ports[path] != port) {
+                ports[path] = port
+                persistPagePorts()
+            }
+        }
         return port
     }
 
-    /** 其他活动窗口已占用的端口 */
-    private fun reservedPorts(self: DshServer): Set<Int> =
-        instances.values.asSequence()
-            .filter { it !== self }
-            .map { it.port }
-            .filter { it in 1..65535 }
-            .toHashSet()
+    /** 页面端口记忆 (惰性加载; 调用方需持有 [allocationLock]) */
+    private fun pagePortsLocked(): MutableMap<String, Int> {
+        pagePortByPath?.let { return it }
+        val out = LinkedHashMap<String, Int>()
+        val raw = try {
+            com.intellij.ide.util.PropertiesComponent.getInstance().getValue(PAGE_PORTS_KEY)
+        } catch (_: Throwable) {
+            null
+        }
+        if (!raw.isNullOrBlank()) {
+            try {
+                val obj = com.google.gson.JsonParser.parseString(raw).asJsonObject
+                for ((key, value) in obj.entrySet()) {
+                    val port = try {
+                        value.asInt
+                    } catch (_: Throwable) {
+                        continue
+                    }
+                    if (port in 1..65535) out[key] = port
+                }
+            } catch (_: Throwable) {
+            }
+        }
+        pagePortByPath = out
+        return out
+    }
+
+    /** 落盘页面端口记忆 (调用方需持有 [allocationLock]) */
+    private fun persistPagePorts() {
+        val ports = pagePortByPath ?: return
+        // 超出上限丢最早的 (LinkedHashMap 保持插入顺序)
+        while (ports.size > PAGE_PORTS_LIMIT) {
+            val first = ports.keys.firstOrNull() ?: break
+            ports.remove(first)
+        }
+        val obj = com.google.gson.JsonObject()
+        for ((key, value) in ports) obj.addProperty(key, value)
+        try {
+            com.intellij.ide.util.PropertiesComponent.getInstance().setValue(PAGE_PORTS_KEY, obj.toString())
+        } catch (_: Throwable) {
+        }
+    }
 
     /**
-     * IDE 退出清理: 停止所有由本插件启动的 dsh 进程 (外部启动的同端口 dsh 不受影响)。
-     * appClosing 与 JVM shutdown hook 都会调用; 各实例自己的独立看门狗是最后一层保障。
+     * 分配 dsh 进程自己的监听端口 (页面不直接用): 避开所有窗口的转发端口与已监听的端口。
+     * @return 端口; 找不到返回 -1
      */
-    fun stopAll() {
-        for (server in instances.values.toList()) {
-            try {
-                server.stopForExit()
-            } catch (t: Throwable) {
-                LOG.warn("stop dsh on exit failed", t)
+    fun allocateProcessPort(): Int = synchronized(allocationLock) {
+        val base = DshSettingsState.getInstance().currentPort()
+        if (base !in 1..65535) return -1
+        // 避开所有窗口的页面端口, 也包括还没打开的项目的 (否则它们下次打开时 origin 会被顶掉)
+        val taken = relayPorts().toMutableSet()
+        pagePortsLocked().values.filter { it in 1..65535 }.forEach { taken.add(it) }
+        val prev = lastProcessPort
+        if (prev in 1..65535 && prev !in taken && !WslSupport.isPortOpen(prev)) return prev
+        var probed = 0
+        val limit = minOf(base + PORT_SCAN_LIMIT, 65535)
+        for (p in base..limit) {
+            if (p in taken) continue
+            if (probed++ >= PORT_PROBE_LIMIT) break
+            if (!WslSupport.isPortOpen(p)) {
+                lastProcessPort = p
+                return p
             }
+        }
+        LOG.warn("no free dsh process port from " + base + " within " + PORT_SCAN_LIMIT + " ports")
+        -1
+    }
+
+    /**
+     * 共用 dsh 重启后作废各窗口转发端口的 RPC 探测缓存。
+     * 接口调用走的是转发端口 (见 [DshServer.port]), 进程重启不会换转发端口, 缓存必须显式清掉。
+     */
+    fun invalidateRelayCaches() {
+        for (port in relayPorts()) DshWorkspaceApi.invalidateStyle(port)
+    }
+
+    /** IDE 退出清理: 停止由本插件启动的 dsh (外部启动的同端口 dsh 不受影响) */
+    fun stopAll() {
+        try {
+            DshHost.stopForExit()
+        } catch (t: Throwable) {
+            LOG.warn("stop dsh on exit failed", t)
         }
     }
 }

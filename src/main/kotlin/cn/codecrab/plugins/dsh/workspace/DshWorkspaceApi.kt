@@ -63,49 +63,30 @@ object DshWorkspaceApi {
     /** 探测到的 RPC 风格 (按端口缓存; dsh 重启不换端口, 风格不变; 停止 dsh 时由 DshServer 清空) */
     private val styleCache = java.util.concurrent.ConcurrentHashMap<Int, RpcStyle>()
 
+    /** 风格探测锁: 同一端口只让一个线程去探测, 其余等它的结果 (见 [resolveStyle]) */
+    private val styleLocks = java.util.concurrent.ConcurrentHashMap<Int, Any>()
 
     /**
-     * 跨窗口的"工作空间结构变更"互斥锁 (应用级: 本 IDE 进程内所有窗口共用)。
-     *
-     * 每个窗口一个 dsh 进程, 而 dsh 的工作空间注册表 (~/.dsh/storages/workspace.json) 是所有
-     * 进程共用的同一个文件, 写入方式是"整份覆盖、后写者赢" —— dsh 自身的假设是"一个进程一个写者",
-     * 多进程同时新建工作空间/会话/归档时会互相覆盖。插件侧把自家各窗口的变更类调用串行化,
-     * 避免两个窗口启动时同时写注册表丢改动; dsh 之外的进程 (其他 IDE 实例/用户手动启动的 dsh)
-     * 不受本锁约束, 那是 dsh 自身的设计边界。
-     *
-     * 只包住变更类 RPC (workspace.create / session.create / workspace.archiveSession),
-     * 读列表等不受影响; 拿不到锁时直接放行 —— 宁可退化为原有行为, 也不把工作空间同步卡死。
+     * 本端口偏好的 authority 主机名 (默认 localhost; 传输不通时固定退到 127.0.0.1, 见 [sendWithHostFallback])。
+     * 换主机名等于换 cookie (dsh 的认证 cookie 按 authority 绑定), 所以不逐请求来回切。
      */
-    private val mutationLock = java.util.concurrent.locks.ReentrantLock()
+    private val hostByPort = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
-    /** 等锁上限 (拿不到就直接执行: 变更 RPC 本身很短, 正常都能等到) */
-    private const val MUTATION_LOCK_WAIT_MS = 3000L
+    /** 单次 /api 请求的默认读超时 (见 [readTimeout]) */
+    private const val RPC_READ_TIMEOUT_MS = 8000L
 
-    /** 变更类 RPC: 同一时刻只允许一个窗口写 dsh 的工作空间注册表 (见 [mutationLock]) */
-    private fun <T> withMutationLock(block: () -> T): T {
-        val locked = try {
-            mutationLock.tryLock(MUTATION_LOCK_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
-        } catch (_: InterruptedException) {
-            false
-        }
-        try {
-            return block()
-        } finally {
-            if (locked) mutationLock.unlock()
-        }
-    }
+    /** 读超时下限: 预算将尽时也要给 dsh 留一点应答时间, 但不至于把线程一直挂住 */
+    private const val MIN_READ_TIMEOUT_MS = 500L
 
-    /** 变更类 RPC (跨窗口串行) */
-    private fun mutatingRpcWithin(port: Int, method: String, payload: JsonObject, deadline: Long): RpcResult? =
-        withMutationLock { rpcWithin(port, method, payload, deadline) }
 
     /** 当前端口的 RPC 风格 (未探测过返回 null) */
     fun rpcStyle(port: Int): RpcStyle? = styleCache[port]
 
 
-    /** dsh 停止时清空探测缓存 (下次启动重新探测) */
+    /** dsh 停止时清空探测缓存与主机名偏好 (下次启动重新探测) */
     fun invalidateStyle(port: Int) {
         styleCache.remove(port)
+        hostByPort.remove(port)
     }
 
     private class RpcResult(val ok: Boolean, val value: JsonObject?)
@@ -167,19 +148,20 @@ object DshWorkspaceApi {
      * 最近判定失败 (API 抖动/字段缺失) 时优先用新建会话自愈; 自愈也失败则返回 null, 调用方会
      * 重试或在页面加载后自动重试, 绝不把「无法确认」静默当作成功 —— 否则页面落在上一个项目,
      * 正是"重启 IDE 后工作空间没切到当前项目"的高发根因 (判定链路恰好赶上 dsh /api 未就绪窗口时)。
-     * @param timeoutMs 整个同步过程的软超时 (避免 dsh API 异常时拖慢页面加载)
+     * @param timeoutMs 整个同步过程的软超时 (避免 dsh API 异常时拖慢页面加载)。不能太小:
+     *   dsh 启动期要等启动令牌 (实测可达十几秒), 接口在并发高峰也可能几秒才应答
      * @param restoreLastSession 打开时恢复上次会话 (设置项, 默认关闭): 关闭时落地会话固定取
      *   **空白会话** (没有就现建一个), 页面因此停在当前项目的空白新会话上, 不复用上次的对话
      */
     fun ensureProjectWorkspace(
         port: Int,
         projectDshPath: String?,
-        timeoutMs: Long = 8000,
+        timeoutMs: Long = 15000,
         restoreLastSession: Boolean = true,
     ): WorkspaceSyncResult? {
         if (projectDshPath.isNullOrBlank()) return null
         val deadline = System.currentTimeMillis() + timeoutMs
-        val create = mutatingRpcWithin(
+        val create = rpcWithin(
             port,
             "workspace.create",
             JsonObject().apply { addProperty("path", projectDshPath) },
@@ -210,7 +192,7 @@ object DshWorkspaceApi {
                 sessionItems = recent.second
             }
             else -> {
-                val bump = mutatingRpcWithin(
+                val bump = rpcWithin(
                     port,
                     "session.create",
                     JsonObject().apply { addProperty("workspaceId", workspaceId) },
@@ -261,7 +243,7 @@ object DshWorkspaceApi {
      * dsh 的"新会话"会复用这个空白会话 (见 connectWorkspace), 不会越堆越多。
      */
     private fun createLandingSession(port: Int, workspaceId: String, deadline: Long): String? {
-        val created = mutatingRpcWithin(
+        val created = rpcWithin(
             port,
             "session.create",
             JsonObject().apply { addProperty("workspaceId", workspaceId) },
@@ -315,7 +297,7 @@ object DshWorkspaceApi {
 
     private fun archiveSession(port: Int, sessionId: String, deadline: Long) {
         if (System.currentTimeMillis() >= deadline) return
-        val r = mutatingRpcWithin(
+        val r = rpcWithin(
             port,
             "workspace.archiveSession",
             JsonObject().apply { addProperty("sessionId", sessionId) },
@@ -470,7 +452,7 @@ object DshWorkspaceApi {
 
     /** 在截止时间前调用一次 dsh /api RPC; 传输层失败返回 null, 业务失败返回 ok=false 的结果 */
     private fun rpcWithin(port: Int, method: String, payload: JsonObject, deadline: Long): RpcResult? {
-        if (System.currentTimeMillis() >= deadline) return null
+        if (remaining(deadline) <= 0) return null
         val style = resolveStyle(port, deadline) ?: return null
         // REMOTE 风格: 端点斜杠化 + payload 转 args 包装 (body 里的 method 必须与端点一致)
         val (endpoint, wirePayload) = if (style == RpcStyle.REMOTE) {
@@ -485,7 +467,7 @@ object DshWorkspaceApi {
             addProperty("method", endpoint)
             add("payload", wirePayload)
         }.toString()
-        val text = post(port, endpoint, body) ?: return null
+        val text = post(port, endpoint, body, deadline) ?: return null
         return try {
             val root = JsonParser.parseString(text).asJsonObject
             val result = root.getAsJsonObject("result")
@@ -504,43 +486,48 @@ object DshWorkspaceApi {
      * 探测并缓存端口的 RPC 风格。
      * 探测请求: 新版格式 session/list -> 2xx 即 REMOTE; 404 再试旧版格式 session.list -> LEGACY。
      * 认证/传输未就绪时返回 null (调用方重试时再探)。
+     *
+     * 同一端口只探测一次 ([styleLocks]): 预热、面板与文件同步会并发调用, 首次探测还要等启动令牌
+     * —— 各线程各自等一遍既白白吃掉同步预算, 又会把 401 日志刷屏。
      */
     private fun resolveStyle(port: Int, deadline: Long): RpcStyle? {
         styleCache[port]?.let { return it }
-        if (System.currentTimeMillis() >= deadline) return null
-        val cookie = DshWebAuth.cookieHeader(port)
-            ?: (if (DshWebAuth.awaitToken(port, 2000)) DshWebAuth.cookieHeader(port) else null)
-        // 对象构造探测报文 (固定结构)
-        val remoteBody = JsonObject().apply {
-            addProperty("type", "client-request")
-            addProperty("rpcId", "style-probe")
-            addProperty("method", "session/list")
-            add("payload", JsonObject().apply {
-                add("args", JsonObject().apply { add("_request", JsonObject()) })
-            })
-        }.toString()
-        val remoteRes = postOnce(port, "session/list", remoteBody, cookie)
-        val rpcStyle = when {
-            remoteRes == null -> null // 传输失败 (dsh 未就绪/无认证): 下次再探
-            remoteRes.status in 200..299 -> RpcStyle.REMOTE
-            remoteRes.status != 404 -> null // 401 等: 认证未就绪, 下次再探
-            else -> {
-                // 新版端点 404: 试旧版
-                val legacyBody = JsonObject().apply {
-                    addProperty("type", "client-request")
-                    addProperty("rpcId", "style-probe")
-                    addProperty("method", "session.list")
-                    add("payload", JsonObject())
-                }.toString()
-                val legacyRes = postOnce(port, "session.list", legacyBody, cookie)
-                if (legacyRes != null && legacyRes.status in 200..299) RpcStyle.LEGACY else null
+        val lock = styleLocks.computeIfAbsent(port) { Any() }
+        synchronized(lock) {
+            styleCache[port]?.let { return it }
+            if (remaining(deadline) <= 0) return null
+            // 对象构造探测报文 (固定结构)
+            val remoteBody = JsonObject().apply {
+                addProperty("type", "client-request")
+                addProperty("rpcId", "style-probe")
+                addProperty("method", "session/list")
+                add("payload", JsonObject().apply {
+                    add("args", JsonObject().apply { add("_request", JsonObject()) })
+                })
+            }.toString()
+            val remoteRes = sendWithHostFallback(port, "session/list", remoteBody, deadline)
+            val rpcStyle = when {
+                remoteRes == null -> null // 传输失败 (dsh 未就绪): 下次再探
+                remoteRes.status in 200..299 -> RpcStyle.REMOTE
+                remoteRes.status != 404 -> null // 401 等: 认证未就绪, 下次再探
+                else -> {
+                    // 新版端点 404: 试旧版
+                    val legacyBody = JsonObject().apply {
+                        addProperty("type", "client-request")
+                        addProperty("rpcId", "style-probe")
+                        addProperty("method", "session.list")
+                        add("payload", JsonObject())
+                    }.toString()
+                    val legacyRes = sendWithHostFallback(port, "session.list", legacyBody, deadline)
+                    if (legacyRes != null && legacyRes.status in 200..299) RpcStyle.LEGACY else null
+                }
             }
+            if (rpcStyle != null) {
+                styleCache[port] = rpcStyle
+                LOG.info("dsh rpc style on " + port + ": " + rpcStyle)
+            }
+            return rpcStyle
         }
-        if (rpcStyle != null) {
-            styleCache[port] = rpcStyle
-            LOG.info("dsh rpc style on $port: $rpcStyle")
-        }
-        return rpcStyle
     }
 
     /**
@@ -558,32 +545,79 @@ object DshWorkspaceApi {
         return remote.first to wire
     }
 
+    /** 距截止时间还剩多少毫秒 (已过期返回 <= 0) */
+    private fun remaining(deadline: Long): Long = deadline - System.currentTimeMillis()
+
     /**
-     * 调用一次 dsh /api RPC (带浏览器认证 cookie)。
-     * 新版 dsh (0.1.2+) 的 /api 需要认证 cookie: 请求前先等启动令牌 (通常几百毫秒内
-     * 随 dsh 输出到达) 并换取 cookie; 旧版 dsh (无认证) 换取失败则按原样请求。
-     * HTTP 401 (认证失效, 如 dsh 重启换了签名密钥) 时作废缓存、重换一次再试。
+     * 单次请求的读超时: 默认 [RPC_READ_TIMEOUT_MS], 但不超过调用方的剩余预算。
+     *
+     * 不能像以前那样固定 4s: 多窗口同时开着 dsh、IDE 又在索引/编译时, dsh 应答可能慢到几秒,
+     * 读超时会把"服务正忙"误判成"接口不可用", 整次工作空间同步跟着失败 (日志里的"同步不可用")。
      */
-    private fun post(port: Int, method: String, body: String): String? {
-        var cookie = DshWebAuth.cookieHeader(port)
-        if (cookie == null && DshWebAuth.awaitToken(port, 2000)) {
-            cookie = DshWebAuth.cookieHeader(port)
+    private fun readTimeout(deadline: Long, budget: Long = RPC_READ_TIMEOUT_MS): Int =
+        minOf(budget, remaining(deadline)).coerceAtLeast(MIN_READ_TIMEOUT_MS).toInt()
+
+    /** 本端口偏好的 authority 主机名 (默认 localhost; localhost 传输不通后固定改用 127.0.0.1) */
+    private fun preferredHost(port: Int): String = hostByPort[port] ?: DshWebAuth.HOST_LOCALHOST
+
+    /** 按 authority 拼 /api 地址 */
+    private fun apiUrl(port: Int, host: String, path: String): String =
+        "http://" + DshWebAuth.authority(port, host) + path
+
+    /**
+     * 带认证地发一次请求: 先按本端口偏好的 authority, **传输层失败**时换 \`127.0.0.1\` 再试一次
+     * (成功就固定下来)。
+     *
+     * 换 authority 必须用它自己的 cookie —— dsh 的认证 cookie 按 authority 绑定, 拿 localhost 的
+     * cookie 去访问 127.0.0.1 只会得到 401。旧实现两处都错: 回退用的还是 localhost 的 cookie,
+     * 拿到 401 后又当成"cookie 失效"把明明有效的 localhost cookie 作废重换, 最后仍然返回失败。
+     */
+    private fun sendWithHostFallback(port: Int, method: String, body: String, deadline: Long): PostResult? {
+        val host = preferredHost(port)
+        val primary = sendOnce(port, host, method, body, deadline)
+        if (primary != null || host == DshWebAuth.HOST_LOOPBACK_IP) return primary
+        val alt = DshWebAuth.HOST_LOOPBACK_IP
+        val fallback = sendOnce(port, alt, method, body, deadline)
+        if (fallback != null) {
+            hostByPort[port] = alt
+            LOG.info("dsh api on " + port + ": " + host + " unreachable, using " + alt)
         }
-        var result = postOnce(port, method, body, cookie)
-        if (result != null && result.status == 401) {
-            DshWebAuth.onUnauthorized(port)
-            val fresh = DshWebAuth.cookieHeader(port)
-            if (fresh != null) {
-                LOG.warn("dsh api $method -> HTTP 401, re-authenticated and retrying")
-                result = postOnce(port, method, body, fresh)
-            }
+        return fallback
+    }
+
+    /**
+     * 单次 /api 请求 (含 401 自愈): 401 时作废**该 authority** 的 cookie; 启动令牌还没到时在剩余
+     * 预算内等令牌 (新版 dsh 启动中令牌往往晚于端口就绪, 实测可达十几秒), 换到新 cookie 后重试一次。
+     * 传输层失败返回 null, 由调用方决定是否换 authority。
+     */
+    private fun sendOnce(port: Int, host: String, method: String, body: String, deadline: Long): PostResult? {
+        val cookie = DshWebAuth.cookieHeader(port, host)
+        val first = requestOnce(apiUrl(port, host, "/api/$method"), method, body, cookie, readTimeout(deadline))
+        if (first == null || first.status != 401) return first
+        // 401: 认证未就绪 (令牌未到 / 进程刚重启换了签名密钥) -> 作废该 authority 的 cookie 后重换一次
+        DshWebAuth.onUnauthorized(port, host)
+        if (DshWebAuth.token(port) == null) {
+            DshWebAuth.awaitToken(port, minOf(DshWebAuth.TOKEN_WAIT_MS, remaining(deadline)).coerceAtLeast(0))
         }
+        val fresh = DshWebAuth.cookieHeader(port, host) ?: return first
+        if (fresh == cookie) return first
+        LOG.info(
+            "dsh api " + method + " -> HTTP 401, re-authenticated and retrying (" +
+                DshWebAuth.authority(port, host) + ")"
+        )
+        return requestOnce(apiUrl(port, host, "/api/$method"), method, body, fresh, readTimeout(deadline))
+    }
+
+    /** 调用一次 /api POST 并返回响应体; 非 2xx 记一行日志后返回 null */
+    private fun post(port: Int, method: String, body: String, deadline: Long): String? {
+        val result = sendWithHostFallback(port, method, body, deadline)
         if (result == null || result.status !in 200..299) {
-            LOG.warn("dsh api $method -> HTTP ${result?.status ?: "transport error"}")
+            LOG.warn(
+                "dsh api " + method + " -> HTTP " + (result?.status ?: "transport error") +
+                    " (" + DshWebAuth.authority(port, preferredHost(port)) + ")"
+            )
             // 端点 404: 端口上的 dsh 可能换了版本 (探测缓存失效), 下次调用重新探测
-            if (result?.status == 404) {
-                styleCache.remove(port)
-            }
+            if (result?.status == 404) styleCache.remove(port)
             return null
         }
         return result.text
@@ -592,56 +626,48 @@ object DshWorkspaceApi {
     private class PostResult(val status: Int, val text: String?)
 
     /**
-     * 单次 HTTP POST; 传输失败返回 null, 成功/已知状态码返回 (status, body)。
-     *
-     * 地址用 [DshWebAuth.authority] 的 `localhost:<port>` (与内嵌浏览器加载的页面同一 authority):
-     * dsh 的认证 cookie 按 authority 绑定, 只有和页面一致的 authority 才能复用浏览器 cookie
-     * 仓里的 cookie (dsh 不是本插件启动时, 那是唯一的认证来源)。
-     * localhost 不可达 (个别环境只监听 IPv4 且解析顺序不同) 时退回 `127.0.0.1` 再试一次。
-     */
-    private fun postOnce(port: Int, method: String, body: String, cookie: String?): PostResult? {
-        val primary = requestOnce("http://${DshWebAuth.authority(port)}/api/$method", method, body, cookie)
-        if (primary != null) return primary
-        return requestOnce("http://127.0.0.1:$port/api/$method", method, body, cookie)
-    }
-
-    /**
-     * 带认证 cookie 的 GET 只读请求 (如 changes.summary); 401 时作废缓存重换一次, 非 2xx 返回 null。
-     * 404 属正常业务结果 (该轮没有摘要), 不据此重置 RPC 风格缓存。
+     * 带认证 cookie 的 GET 只读请求 (如 changes.summary); 401 时作废该 authority 的 cookie 重换一次,
+     * 非 2xx 返回 null。404 属正常业务结果 (该轮没有摘要), 不据此重置 RPC 风格缓存。
      */
     private fun get(port: Int, path: String, query: String, timeoutMs: Long): String? {
-        var cookie = DshWebAuth.cookieHeader(port)
-        if (cookie == null && DshWebAuth.awaitToken(port, 2000)) {
-            cookie = DshWebAuth.cookieHeader(port)
-        }
-        var result = getOnce(port, path, query, cookie, timeoutMs)
-        if (result != null && result.status == 401) {
-            DshWebAuth.onUnauthorized(port)
-            val fresh = DshWebAuth.cookieHeader(port)
-            if (fresh != null) result = getOnce(port, path, query, fresh, timeoutMs)
-        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        val result = getWithHostFallback(port, path, query, deadline)
         if (result == null || result.status !in 200..299) {
-            LOG.debug("dsh api GET $path -> HTTP ${result?.status ?: "transport error"}")
+            LOG.debug("dsh api GET " + path + " -> HTTP " + (result?.status ?: "transport error"))
             return null
         }
         return result.text
     }
 
-    /** 单次 GET: 先 localhost, 不可达时退回 127.0.0.1 (与 [postOnce] 同样的地址策略) */
-    private fun getOnce(port: Int, path: String, query: String, cookie: String?, timeoutMs: Long): PostResult? {
-        val suffix = "/api/$path?$query"
-        val primary = requestOnce("http://${DshWebAuth.authority(port)}$suffix", "GET", null, cookie, timeoutMs)
-        if (primary != null) return primary
-        return requestOnce("http://127.0.0.1:$port$suffix", "GET", null, cookie, timeoutMs)
+    /** 与 [sendWithHostFallback] 同样的主机名回退策略 (GET 版) */
+    private fun getWithHostFallback(port: Int, path: String, query: String, deadline: Long): PostResult? {
+        val host = preferredHost(port)
+        val primary = getOnce(port, host, path, query, deadline)
+        if (primary != null || host == DshWebAuth.HOST_LOOPBACK_IP) return primary
+        val alt = DshWebAuth.HOST_LOOPBACK_IP
+        val fallback = getOnce(port, alt, path, query, deadline)
+        if (fallback != null) hostByPort[port] = alt
+        return fallback
     }
 
+    /** 单次 GET (含 401 自愈, 与 [sendOnce] 同款) */
+    private fun getOnce(port: Int, host: String, path: String, query: String, deadline: Long): PostResult? {
+        val suffix = "/api/" + path + "?" + query
+        val cookie = DshWebAuth.cookieHeader(port, host)
+        val first = requestOnce(apiUrl(port, host, suffix), "GET", null, cookie, readTimeout(deadline))
+        if (first == null || first.status != 401) return first
+        DshWebAuth.onUnauthorized(port, host)
+        val fresh = DshWebAuth.cookieHeader(port, host) ?: return first
+        if (fresh == cookie) return first
+        return requestOnce(apiUrl(port, host, suffix), "GET", null, fresh, readTimeout(deadline))
+    }
     /** 对单个地址发起一次 HTTP 请求 (body 为 null 时发 GET, 否则 POST); 传输失败 (未拿到 HTTP 状态) 返回 null */
     private fun requestOnce(
         url: String,
         method: String,
         body: String?,
         cookie: String?,
-        timeoutMs: Long = 4000,
+        timeoutMs: Int,
     ): PostResult? {
         var conn: HttpURLConnection? = null
         return try {
@@ -650,7 +676,7 @@ object DshWorkspaceApi {
             conn = target.openConnection() as HttpURLConnection
             conn.requestMethod = if (body == null) "GET" else "POST"
             conn.connectTimeout = 2000
-            conn.readTimeout = timeoutMs.toInt()
+            conn.readTimeout = timeoutMs
             cookie?.let { conn.setRequestProperty("Cookie", it) }
             if (body != null) {
                 conn.doOutput = true
@@ -663,14 +689,19 @@ object DshWorkspaceApi {
             } catch (_: Throwable) {
                 null
             }
-            // 诊断: 非 2xx 时打印状态 + 请求体 + 响应体 (便于定位 HTTP 层失败原因)
+            // 诊断: 非 2xx 时打印状态 (便于定位 HTTP 层失败原因)。401 是 dsh 启动期/认证未就绪的
+            // 预期状态 —— 调用方会等启动令牌重换 cookie 再试, 不必刷整屏的请求/响应体
             if (code !in 200..299) {
-                val resp = text ?: try {
-                    conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
-                } catch (_: Throwable) {
-                    null
+                if (code == 401) {
+                    LOG.info("dsh api " + method + " -> HTTP 401, url=" + url)
+                } else {
+                    val resp = text ?: try {
+                        conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    LOG.warn("dsh api " + method + " -> HTTP " + code + ", url=" + url + ", body=" + body?.take(240) + ", resp=" + resp?.take(160))
                 }
-                LOG.warn("dsh api $method -> HTTP $code, url=$url, body=${body?.take(240)}, resp=${resp?.take(160)}")
             }
             PostResult(code, text)
         } catch (t: Throwable) {

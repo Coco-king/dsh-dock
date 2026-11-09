@@ -3,6 +3,7 @@ package cn.codecrab.plugins.dsh.toolwindow
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.reference.DshReference
 import cn.codecrab.plugins.dsh.server.DshServer
+import cn.codecrab.plugins.dsh.server.DshState
 import cn.codecrab.plugins.dsh.server.DshWebAuth
 import cn.codecrab.plugins.dsh.settings.DshSettingsConfigurable
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
@@ -57,7 +58,10 @@ class DshToolWindowPanel(
 
     private val settings = DshSettingsState.getInstance()
 
-    /** 本窗口自己的 dsh 实例 (项目级服务; 每个窗口一个独立端口, 见 [DshServer]) */
+    /**
+     * 本窗口的 dsh 门面 (项目级服务): 共用进程 [cn.codecrab.plugins.dsh.server.DshHost] +
+     * 本窗口自己的页面端口 (见 [DshServer]); 刷新/停止影响的是共用进程, 页面状态按端口隔离。
+     */
     private val server = DshServer.getInstance(project)
 
     /** 日志时间戳格式 (DateTimeFormatter 不可变、线程安全, 可复用)。
@@ -70,7 +74,13 @@ class DshToolWindowPanel(
      * 注册后 DshServer 会立即用当前状态回调一次, 便于新面板创建时
      * 状态文字/按钮与"本窗口 dsh 的真实状态"对齐。
      */
-    private val stateListener: (DshServer.State) -> Unit = ::onStateChanged
+    private val stateListener: (DshState) -> Unit = ::onStateChanged
+
+    /**
+     * 日志接收者 (绑定本面板实例, 注册与注销用同一实例)。
+     * 进程是 IDE 内共用的, 它的输出会广播到每个打开的窗口, 因此面板创建时注册、销毁时注销。
+     */
+    private val logSink: (String) -> Unit = ::appendLog
 
     private val statusLabel = JBLabel(DshBundle.message("panel.status.idle"))
     private val startStopBtn = JButton(DshBundle.message("panel.btn.start"))
@@ -184,6 +194,7 @@ class DshToolWindowPanel(
         DshDisposer.register(parentDisposable, com.intellij.openapi.Disposable {
             DshToolWindowRegistry.unregister(project)
             server.removeStateListener(stateListener)
+            server.removeLogSink(logSink)
         })
 
         // 文件同步监听: 必须在注册状态监听**之前**创建 —— addStateListener 会立即用当前
@@ -194,9 +205,11 @@ class DshToolWindowPanel(
             editorSync = sync
             DshDisposer.register(parentDisposable, com.intellij.openapi.Disposable { sync.stop() })
         }
-        // 注册状态监听: 立即以当前状态回调一次 (dsh 可能已在本窗口启动); 每个窗口一个实例,
-        // 状态变化只影响本窗口
+        // 注册状态监听: 立即以当前状态回调一次 (dsh 可能已被别的窗口拉起); 状态是进程级的,
+        // 广播到每个窗口的面板 (一个窗口启动/停止, 各窗口一起变)
         server.addStateListener(stateListener)
+        // 共用 dsh 的进程输出广播给所有打开的窗口 (本面板注册自己的接收者)
+        server.addLogSink(logSink)
         if (settings.startMode != DshSettingsState.START_MODE_MANUAL) {
             // 非手动模式: 打开窗口时若 dsh 未运行则兜底启动 (IDE 启动模式下它通常已在运行, 此为重试),
             // 稍后执行先渲染 UI
@@ -204,7 +217,7 @@ class DshToolWindowPanel(
                 if (!project.isDisposed) ensureRunning()
             }
         }
-        // 日志里标明本窗口自己的 dsh 端口 (每个窗口一个实例, 端口互不相同, 便于对照排查)
+        // 日志里标明本窗口的页面端口 (各窗口端口不同; 背后是 IDE 内共用的同一个 dsh 进程)
         appendLog(DshBundle.message("log.windowPort", server.port.toString()))
         startReadyWatchdog()
     }
@@ -222,7 +235,7 @@ class DshToolWindowPanel(
             }
             if (jcefAvailable && !webUiLoaded) {
                 val port = server.port
-                if (server.state == DshServer.State.RUNNING || WslSupport.isPortOpen(port)) {
+                if (server.state == DshState.RUNNING || WslSupport.isPortOpen(port)) {
                     webUiLoaded = true
                     appendLog(DshBundle.message("log.portReady", port.toString()))
                     loadWebUi()
@@ -245,8 +258,8 @@ class DshToolWindowPanel(
         }
 
         startStopBtn.addActionListener {
-            if (server.state == DshServer.State.RUNNING || server.state == DshServer.State.STARTING) {
-                server.stop(::appendLog)
+            if (server.state == DshState.RUNNING || server.state == DshState.STARTING) {
+                server.stop()
             } else {
                 ensureRunning()
             }
@@ -277,7 +290,7 @@ class DshToolWindowPanel(
         val content = JPanel(BorderLayout())
         content.isOpaque = false
         // 回放预热日志 (已按事件时刻打好时间戳, 原样追加) 并挂上实时转发接收预热后续日志
-        for (line in DshWebUiWarmup.attachLiveSink { appendEdt(it) }) appendEdt(line)
+        for (line in DshWebUiWarmup.attachLiveSink(project) { appendEdt(it) }) appendEdt(line)
         val own = DshWebUiWarmup.takeOwn(project)
         if (own == null && DshWebUiWarmup.warmupInFlight(project)) {
             // 本项目预热仍在进行 (窗口随 IDE 启动恢复时常见): 不再并行自建浏览器/同步 (与预热重复劳动),
@@ -287,7 +300,7 @@ class DshToolWindowPanel(
             return content
         }
         // 本项目没有自己的预热可用 (未发起 / 已结束 / 已被取走): 按原流程新建浏览器 ——
-        // 每个窗口一个 dsh 实例/端口, 不再跨窗口借用浏览器 (那会把页面指向别的实例/端口)
+        // 每个窗口有自己的页面端口, 不跨窗口借用浏览器 (那会把页面指向别的端口/会话)
         return finishContent(content, own)
     }
 
@@ -339,7 +352,7 @@ class DshToolWindowPanel(
                 }
             }
             // 本项目预热没产出可用页面 (放弃/失败/超时): 下面按原流程自建浏览器 ——
-            // 每个窗口一个 dsh 实例/端口, 不跨窗口借用浏览器 (那会把页面指向别的实例)
+            // 每个窗口有自己的页面端口, 不跨窗口借用浏览器 (那会把页面指向别的端口/会话)
             SwingUtilities.invokeLater {
                 waitingForWarmup = false
                 if (project.isDisposed) {
@@ -401,7 +414,7 @@ class DshToolWindowPanel(
     private fun adoptWarmedBrowser(warmed: DshWebUiWarmup.Warmed?): JComponent? {
         if (warmed == null) return null
         val portOk = warmed.port == server.port
-        val dshAlive = server.state == DshServer.State.RUNNING || WslSupport.isPortOpen(warmed.port)
+        val dshAlive = server.state == DshState.RUNNING || WslSupport.isPortOpen(warmed.port)
         if (!portOk || !dshAlive) {
             appendLog(
                 DshBundle.message(
@@ -454,7 +467,7 @@ class DshToolWindowPanel(
                     graceWaitForWarmPage()
                 }
                 SwingUtilities.invokeLater {
-                    if (!project.isDisposed) loadWebUi(reloadOnlyWhenBumped = true)
+                    if (!project.isDisposed) loadWebUi(reloadOnlyWhenBumped = true, forceReloadWhenConfirmed = true)
                 }
             }
             warmed.pageLoaded -> {
@@ -515,7 +528,7 @@ class DshToolWindowPanel(
                 pageLoaded = false
                 DshWebUiInject.injectUiThemeLocaleOverride(browser, settings, ::appendLog)
                 // 在应用脚本执行前把"落地会话"钉进页面持久化选择 (不属于本项目时才写)
-                DshWebUiInject.pinSessionSelection(browser, syncLandingSessionId, syncSessionIds, ::appendLog)
+                DshWebUiInject.pinSessionSelection(browser, syncLandingSessionId, syncSessionIds, onLog = ::appendLog)
             }
         }
 
@@ -567,7 +580,7 @@ class DshToolWindowPanel(
             appendLog(DshBundle.message("log.refNoEmbedded", reference))
             return
         }
-        if (server.state == DshServer.State.IDLE) {
+        if (server.state == DshState.IDLE) {
             appendLog(DshBundle.message("log.refStartDsh"))
             ensureRunning()
         }
@@ -739,10 +752,12 @@ class DshToolWindowPanel(
 
     /** 启动 dsh (供工具窗口按钮与引用注入共用) */
     fun ensureRunning() {
+        // 共用 dsh 已在启动/运行 (可能是别的窗口拉起的): 状态回调会接管页面, 这里不再重复发起
+        if (server.state != DshState.IDLE) return
         appendLog(DshBundle.message("log.startingDsh"))
         // 仅当真正发起启动尝试 (非"已在运行/端口被占用") 时才标记本面板, 供失败通知使用
-        // 端口由本窗口自己的实例分配 (见 [DshServer.port]), 不再依赖全局设置里的那个端口
-        startRequestedByThisPanel = server.start(::appendLog)
+        // 端口是本窗口的页面端口 (见 [DshServer.port]), 不再依赖全局设置里的那个端口
+        startRequestedByThisPanel = server.start()
     }
 
     /**
@@ -751,9 +766,32 @@ class DshToolWindowPanel(
      * 全局的"最近工作空间" (只要别的项目里聊过天, 它就会变成"最近")。
      * 写入只在当前文档已是 dsh 页面 (同源) 时有效, 首次加载由页面脚本兜底纠正。
      */
-    private fun loadBrowserUrl(url: String) {
-        browser?.let { DshWebUiInject.pinSessionSelection(it.cefBrowser, syncLandingSessionId, syncSessionIds, ::appendLog) }
-        browser?.loadURL(url)
+    /**
+     * 加载 WebUI 地址。
+     *
+     * 页面已经在本窗口的 dsh 上 (同一 origin) 时, 把"钉住落地会话"和"跳转"交给**页面自己**在同一段
+     * 脚本里执行: Kotlin 侧"先 executeJavaScript 再 loadURL" 是两个独立的异步投递, 导航可能
+     * 先提交, 新页面按**旧的选择**启动 —— 多窗口共用一个 dsh 时, 全局"最近工作空间"常常是别的
+     * 项目, 页面就会显示成别人的工作空间 (刚启动还没来得及改写选择)。
+     *
+     * 首次加载 (about:blank / 页面跨 origin) 无法写入 localStorage, 退回普通 loadURL;
+     * 之后的同步结果会再按上面的方式把页面带回本项目。
+     */
+    private fun loadBrowserUrl(url: String, forceLanding: Boolean = false) {
+        val b = browser ?: return
+        val current = try {
+            b.cefBrowser.url
+        } catch (_: Throwable) {
+            null
+        }
+        val origin = DshServer.webUrl(server.port)
+        if (current != null && current.startsWith(origin)) {
+            DshWebUiInject.navigateWithPinnedSession(
+                b.cefBrowser, syncLandingSessionId, syncSessionIds, url, forceLanding, ::appendLog,
+            )
+        } else {
+            b.loadURL(url)
+        }
     }
 
     private fun reloadWebUi() {
@@ -773,8 +811,8 @@ class DshToolWindowPanel(
      *  - [loadFirst]=true (手动刷新): 立即重载页面, 同步转后台 —— 工作空间绝大多数情况本就是
      *    当前项目, 页面直接可用; 仅当同步发现需要切换工作空间 (bumped) 或同步失败时才补刷一次。
      *
-     * 每个窗口一个 dsh 实例 (各自端口, 见 [DshServer]): 刷新只影响本窗口, 其他窗口的页面、
-     * 工作空间与会话互不干扰 (端口即 origin, localStorage/cookie 各自独立)。
+     * 各窗口共用 IDE 内的一个 dsh 进程, 但页面端口不同 (见 [DshServer]): 刷新只影响本窗口的页面,
+     * 页面状态 (浏览器本地存储) 与认证按端口隔离; 工作空间/会话由那一个进程统一维护。
      *
      * 地址说明: 新版 dsh (0.1.2+) 的 WebUI 首页需带启动令牌访问 (换取认证 cookie),
      * 页面加载优先用带令牌的地址 (令牌随 dsh 进程输出打印, 插件自动捕获);
@@ -784,11 +822,16 @@ class DshToolWindowPanel(
      *   "工作空间本就是这个项目"时页面保持原样 (用于接管预热页面时预热同步未确认的场景,
      *   见 [adoptWarmedBrowser]); 确实需要切换工作空间 (bumped) 时才刷新页面。
      */
-    private fun loadWebUi(loadFirst: Boolean = false, reloadOnlyWhenBumped: Boolean = false) {
+    private fun loadWebUi(
+        loadFirst: Boolean = false,
+        reloadOnlyWhenBumped: Boolean = false,
+        /** 预热页面当时没能确认工作空间: 只要这次同步成功就必须刷一次 (页面可能停在任何工作空间上) */
+        forceReloadWhenConfirmed: Boolean = false,
+    ) {
         val port = server.port
         val projectPath = project.basePath
         if (projectPath == null) {
-            val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+            val url = webUiUrl(port)
             appendLog(DshBundle.message("log.loaded", url))
             loadBrowserUrl(url)
             return
@@ -798,7 +841,7 @@ class DshToolWindowPanel(
         if (!loadInFlight.compareAndSet(false, true)) return
         if (loadFirst) {
             // 先立即重载页面, 让刷新按钮即时生效
-            val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
+            val url = webUiUrl(port)
             appendLog(DshBundle.message("log.loaded", url))
             loadBrowserUrl(url)
         }
@@ -806,14 +849,13 @@ class DshToolWindowPanel(
         Thread({
             var settled = false
             try {
-                // 新版 dsh 的启动令牌随进程输出到达, 通常比端口就绪晚几百毫秒:
-                // 等令牌后再决定加载地址, 避免页面首次加载就落在 401 认证页
-                if (DshServer.webTokenUrl(port) == null) DshWebAuth.awaitToken(port, DshWebAuth.TOKEN_WAIT_MS)
-                val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
                 val dshPath = DshReference.dshPathFromString(projectPath, settings.launchMode)
-                // 端口刚就绪时 dsh 的 /api 可能还有一小段未就绪窗口: 小间隔重试同步 (约 8s 上限)
+                // 端口刚就绪时 dsh 的 /api 可能还没准备好 (启动令牌/认证链路尚未就绪): 同步内部会
+                // 在 401 时等令牌后重试, 这里再套一层小间隔重试。总预算要给足 —— 多窗口并发启动、
+                // IDE 同时索引/编译时, dsh 应答慢几秒到十几秒都出现过, 预算太小会把"dsh 忙"
+                // 误判成"同步失败" (日志里那句"工作空间同步不可用")
                 var result: DshWorkspaceApi.WorkspaceSyncResult? = null
-                val deadline = System.currentTimeMillis() + 8000
+                val deadline = System.currentTimeMillis() + SYNC_BUDGET_MS
                 while (result == null && System.currentTimeMillis() < deadline) {
                     result = DshWorkspaceApi.ensureProjectWorkspace(
                         port, dshPath, restoreLastSession = settings.restoreLastSession,
@@ -846,6 +888,8 @@ class DshToolWindowPanel(
                 if (DshWorkspaceApi.syncLocalePreference(port, dshLocale)) {
                     appendLog(DshBundle.message("log.localeSet", dshLocale))
                 }
+                // 地址在同步之后取: 同步过程中可能才捕获到启动令牌, 带上它页面才不会停在认证页
+                val url = webUiUrl(port)
                 settled = true
                 SwingUtilities.invokeLater {
                     // 先释放单飞标记再发起加载 (同一 EDT 任务内不会插入新的加载请求)
@@ -864,15 +908,17 @@ class DshToolWindowPanel(
                         }
                         // 仅核对模式: 工作空间本就是这个项目 -> 页面保持原样; 确实切了才刷新
                         reloadOnlyWhenBumped -> {
-                            if (r != null && r.bumped) {
+                            if (r != null && (r.bumped || forceReloadWhenConfirmed)) {
                                 appendLog(DshBundle.message("log.workspaceSwitchedReload"))
-                                loadBrowserUrl(url)
+                                loadBrowserUrl(url, forceLanding = !settings.restoreLastSession)
                             }
                         }
                         // 同步前已加载且工作空间无需切换: 页面已正确, 无需再刷
                         !loadFirst -> {
                             appendLog(DshBundle.message("log.loaded", url))
-                            loadBrowserUrl(url)
+                            // 打开工具窗口/自动加载: 设置要求"每次打开停在空白新会话"时强制钉住落地会话
+                            // (每个项目现在有自己的固定页面端口, 页面会恢复上次的对话, 需要被这条设置覆盖)
+                            loadBrowserUrl(url, forceLanding = !settings.restoreLastSession)
                         }
                     }
                 }
@@ -882,6 +928,12 @@ class DshToolWindowPanel(
             }
         }, "dsh-plugin-workspace-ensure").apply { isDaemon = true }.start()
     }
+
+    /**
+     * 当前应加载的 WebUI 地址: 已捕获该 dsh 进程的启动令牌时带上令牌 (新版 dsh 用它换取认证 cookie),
+     * 否则退回普通地址 (旧版 dsh 不需要令牌; 新版令牌未到时页面会先停在认证页, 之后自动重试)。
+     */
+    private fun webUiUrl(port: Int): String = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
 
     /** 本项目在 dsh 侧的工作空间路径 (按启动方式转换, 见 [DshReference]) */
     private fun currentProjectDshPath(): String? =
@@ -1000,18 +1052,24 @@ class DshToolWindowPanel(
         }
     }
 
-    private fun onStateChanged(state: DshServer.State) {
+    private fun onStateChanged(state: DshState) {
         SwingUtilities.invokeLater {
             if (project.isDisposed) return@invokeLater
             updateButtons(state)
             when (state) {
-                DshServer.State.RUNNING -> {
+                DshState.RUNNING -> {
                     startRequestedByThisPanel = false
                     dshMissingWarned = false
                     nodeEnvMissingWarned = false
                     wslErrorSeen = false
-                    statusLabel.text = DshBundle.message("panel.status.running", server.port.toString())
+                    // 两个端口含义不同: 页面端口是本窗口的 (浏览器地址/页面状态按它隔离),
+                    // 进程端口是 IDE 内共用的那个 dsh 的 —— 都显示出来, 免得看日志时对不上
+                    val pagePort = server.port.toString()
+                    val processPort = server.processPort.toString()
+                    statusLabel.text = DshBundle.message("panel.status.running", pagePort, processPort)
+                    statusLabel.toolTipText = DshBundle.message("panel.status.running.tip", pagePort, processPort)
                     statusLabel.foreground = JBColor(Color(0x1B8A1B), Color(0x6FCF6F))
+                    appendLog(DshBundle.message("log.windowPorts", pagePort, processPort))
                     // dsh 就绪: 启动文件同步监听 (dsh 编辑文件后自动刷新 IDEA 编辑器)
                     editorSync?.start()
                     // 与看门狗同一门控 (!webUiLoaded): 已发起过加载就不再重复触发,
@@ -1033,24 +1091,27 @@ class DshToolWindowPanel(
                         }
                     }
                 }
-                DshServer.State.STARTING -> {
+                DshState.STARTING -> {
                     statusLabel.text = DshBundle.message("panel.status.starting")
+                    statusLabel.toolTipText = null
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                 }
-                DshServer.State.STOPPING -> {
+                DshState.STOPPING -> {
                     // 用户主动停止 (含启动过程中点停止), 不算启动失败
                     startRequestedByThisPanel = false
                     statusLabel.text = DshBundle.message("panel.status.stopping")
+                    statusLabel.toolTipText = null
                     statusLabel.foreground = JBColor(Color(0xB8860B), Color(0xE6C560))
                     editorSync?.stop()
                 }
-                DshServer.State.IDLE -> {
+                DshState.IDLE -> {
                     val failed = startRequestedByThisPanel
                     val missingDsh = dshMissingWarned
                     val nodeMissing = nodeEnvMissingWarned
                     val wslError = wslErrorSeen
                     startRequestedByThisPanel = false
                     statusLabel.text = DshBundle.message("panel.status.idle")
+                    statusLabel.toolTipText = null
                     statusLabel.foreground = JBColor.GRAY
                     externalBrowserOpenedForSession = false
                     webUiLoaded = false
@@ -1102,15 +1163,15 @@ class DshToolWindowPanel(
         }
     }
 
-    private fun updateButtons(state: DshServer.State) {
-        val busy = state == DshServer.State.STARTING || state == DshServer.State.STOPPING
+    private fun updateButtons(state: DshState) {
+        val busy = state == DshState.STARTING || state == DshState.STOPPING
         startStopBtn.text = when (state) {
-            DshServer.State.RUNNING -> DshBundle.message("panel.btn.stop")
-            DshServer.State.STARTING -> DshBundle.message("panel.btn.starting")
-            DshServer.State.STOPPING -> DshBundle.message("panel.btn.stopping")
-            DshServer.State.IDLE -> DshBundle.message("panel.btn.start")
+            DshState.RUNNING -> DshBundle.message("panel.btn.stop")
+            DshState.STARTING -> DshBundle.message("panel.btn.starting")
+            DshState.STOPPING -> DshBundle.message("panel.btn.stopping")
+            DshState.IDLE -> DshBundle.message("panel.btn.start")
         }
-        startStopBtn.isEnabled = !busy || state == DshServer.State.STOPPING
+        startStopBtn.isEnabled = !busy || state == DshState.STOPPING
         refreshBtn.isEnabled = !busy
     }
 
@@ -1122,6 +1183,8 @@ class DshToolWindowPanel(
     }
 
     private fun appendLog(line: String) {
+        // 日志里可能带启动令牌 (等同访问凭据): 打码后再展示, 免得截图/贴日志时泄露
+        val safeLine = DshWebAuth.maskToken(line)
         // 日志里出现"找不到 dsh"警告 -> 标记, 启动失败通知里给出对应提示
         // (中英两种标记都匹配: 生成脚本里已按 IDE 语言输出对应语言的消息)
         if (line.contains("找不到 dsh") || line.contains("dsh not found")) {
@@ -1139,7 +1202,7 @@ class DshToolWindowPanel(
         }
         // 时间戳在日志产生时 (调用线程) 立即打上, 而非 EDT 实际渲染时 ——
         // EDT 繁忙 (如 JCEF 冷启动) 会延迟渲染, 按渲染时间计时会失真
-        appendEdt(stamp(line))
+        appendEdt(stamp(safeLine))
     }
 
     /** 把已带时间戳的文本追加到日志面板 (预热日志回放用: 时间戳已在事件产生时打好) */
@@ -1161,5 +1224,15 @@ class DshToolWindowPanel(
             }
         } catch (_: Exception) {
         }
+    }
+
+    private companion object {
+        /**
+         * 一次"同步工作空间 + 加载页面"的总预算。
+         *
+         * 不能小: 多窗口并发启动 dsh、IDE 又在索引/编译时, dsh 的 /api 应答可能慢到十几秒
+         * (读超时看到的 Read timed out), 预算太小会把"dsh 忙"直接判成"工作空间同步不可用"。
+         */
+        const val SYNC_BUDGET_MS = 20_000L
     }
 }

@@ -3,7 +3,7 @@ package cn.codecrab.plugins.dsh.toolwindow
 import cn.codecrab.plugins.dsh.DshBundle
 import cn.codecrab.plugins.dsh.reference.DshReference
 import cn.codecrab.plugins.dsh.server.DshServer
-import cn.codecrab.plugins.dsh.server.DshWebAuth
+import cn.codecrab.plugins.dsh.server.DshState
 import cn.codecrab.plugins.dsh.settings.DshSettingsState
 import cn.codecrab.plugins.dsh.util.DshJcefSupport
 import cn.codecrab.plugins.dsh.util.WslSupport
@@ -19,7 +19,6 @@ import org.cef.browser.CefFrame
 import org.cef.handler.CefLoadHandler
 import org.cef.handler.CefLoadHandlerAdapter
 import org.cef.network.CefRequest
-import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.swing.SwingUtilities
 
@@ -37,7 +36,7 @@ import javax.swing.SwingUtilities
  * 首次打开工具窗口都能直接复用, 不必现场冷启动 CEF。
  *
  * 复用与降级 (面板创建时调 [takeOwn]):
- *  - 只取**本项目自己**的预热结果: 每个窗口一个 dsh 实例、一个独立端口, 别的窗口的浏览器
+ *  - 只取**本项目自己**的预热结果: 每个窗口一个页面端口 (背后是共用的 dsh 进程), 别的窗口的浏览器
  *    指向的是别的端口 (别的实例), 借用过来只会串页面, 因此不再跨窗口借用;
  *  - 页面尚未加载完 / 端口已变 / dsh 不在运行 -> 面板释放预热浏览器按原流程创建
  *    (此时 CEF 已由预热启动, 创建成本也已大幅降低);
@@ -49,6 +48,9 @@ import javax.swing.SwingUtilities
 object DshWebUiWarmup {
 
     private val LOG = Logger.getInstance(DshWebUiWarmup::class.java)
+
+    /** 预热时"同步工作空间 + 等接口就绪"的总预算 (理由见 DshToolWindowPanel 的 SYNC_BUDGET_MS) */
+    private const val SYNC_BUDGET_MS = 20_000L
 
     /** 预热结果: 面板可整体复用 (client + 已加载页面), 或仅作为"CEF 已启动"的降级事实 */
     class Warmed internal constructor(
@@ -109,12 +111,11 @@ object DshWebUiWarmup {
     /** 项目 -> 预热状态 (每个项目只预热一次) */
     private val slots = HashMap<Project, Slot>()
 
-    /** 预热进行中时, 后续日志实时转发给已打开的面板 (面板打开早于预热完成时仍能看到进度) */
-    @Volatile
-    private var liveSink: ((String) -> Unit)? = null
+    /** 项目 -> 预热日志的实时接收者 (该项目的面板创建后注册); 预热线程写日志时按项目分发 */
+    private val liveSinks = HashMap<Project, (String) -> Unit>()
 
-    /** 预热期间产生的日志 (面板创建后回放到工具窗口日志面板) */
-    private val logBuffer: MutableCollection<String> = Collections.synchronizedList(ArrayList())
+    /** 项目 -> 预热期间产生的日志 (该项目面板创建前先缓存, 创建时回放) */
+    private val logBuffers = HashMap<Project, MutableList<String>>()
 
     /**
      * 发起预热 (IDE 启动自动启动流程调用): 等 dsh 就绪后同步工作空间并加载 WebUI。
@@ -154,14 +155,16 @@ object DshWebUiWarmup {
 
 
     /**
-     * 取走并清空预热日志, 同时挂上实时转发 (后续预热日志实时送达 [sink])。
+     * 取走并清空**本项目**的预热日志, 同时挂上实时转发 (后续本项目预热日志实时送达 [sink])。
      * 面板创建时调用: 缓存的历史日志原样回放 (已按事件时刻打好时间戳), 之后的日志实时送达。
+     *
+     * 按项目分开: 预热以项目为单位并行进行, 共用一份缓冲/接收者会把别的项目的启动过程
+     * (别的端口、别的项目名) 写进本窗口的日志面板, 排查时误导性很强。
      */
-    fun attachLiveSink(sink: (String) -> Unit): List<String> = synchronized(logBuffer) {
-        liveSink = sink
-        val copy = ArrayList(logBuffer)
-        logBuffer.clear()
-        copy
+    fun attachLiveSink(project: Project, sink: (String) -> Unit): List<String> = synchronized(lock) {
+        liveSinks[project] = sink
+        val buffered = logBuffers.remove(project) ?: return emptyList()
+        ArrayList(buffered)
     }
 
     /** 本项目的预热是否进行中 (已发起、未结束; 供面板在预热未完成时给出提示) */
@@ -170,8 +173,10 @@ object DshWebUiWarmup {
         !slot.finished
     }
 
-    /** 清理已关闭项目的预热结果 (浏览器无人接管, 否则会一直留到 IDE 退出) */
+    /** 清理已关闭项目的预热结果与日志槽 (否则会一直留到 IDE 退出) */
     private fun pruneDisposedLocked() {
+        liveSinks.keys.filter { it.isDisposed }.forEach { liveSinks.remove(it) }
+        logBuffers.keys.filter { it.isDisposed }.forEach { logBuffers.remove(it) }
         val it = slots.entries.iterator()
         while (it.hasNext()) {
             val entry = it.next()
@@ -186,26 +191,33 @@ object DshWebUiWarmup {
     /** 日志时间戳格式 (DateTimeFormatter 不可变、线程安全, 可复用) */
     private val timeFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
 
-    private fun log(line: String) {
+    private fun log(project: Project, line: String) {
         // 日志产生时即打上时间戳: 面板回放时保留原事件时刻, 便于对照启动/预热各阶段耗时
         val stamped = "[${java.time.LocalTime.now().format(timeFormatter)}] $line"
         LOG.info("[webui-warmup] $stamped")
-        // 有面板在听则实时转发 (不再进缓冲, 避免后续面板回放重复); 否则先缓存等面板创建时回放
-        val sink = liveSink
-        if (sink != null) sink.invoke(stamped) else logBuffer.add(stamped)
+        // 有面板在听则实时转发 (不再进缓冲, 避免后续面板回放重复); 否则先按项目缓存等面板回放
+        val sink = synchronized(lock) {
+            val live = liveSinks[project]
+            if (live == null) logBuffers.getOrPut(project) { ArrayList() }.add(stamped)
+            live
+        }
+        try {
+            sink?.invoke(stamped)
+        } catch (_: Throwable) {
+        }
     }
 
     private fun run(project: Project, slot: Slot) {
         val settings = DshSettingsState.getInstance()
         val server = DshServer.getInstance(project)
-        val port = server.port
+        var port = server.port
         val label = project.name
         try {
-            log(DshBundle.message("log.warmup.start", label))
+            log(project, DshBundle.message("log.warmup.start", label))
             // 1) 等 dsh 就绪 (启动流程可能仍在进行): 与 DshServer.waitForReady 同款端口轮询
             val readyDeadline = System.currentTimeMillis() + 90_000
             while (System.currentTimeMillis() < readyDeadline) {
-                if (server.state == DshServer.State.RUNNING || WslSupport.isPortOpen(port)) break
+                if (server.state == DshState.RUNNING || WslSupport.isPortOpen(port)) break
                 if (project.isDisposed) return
                 try {
                     Thread.sleep(700)
@@ -214,21 +226,17 @@ object DshWebUiWarmup {
                 }
             }
             if (project.isDisposed) return
-            if (server.state != DshServer.State.RUNNING && !WslSupport.isPortOpen(port)) {
-                log(DshBundle.message("log.warmup.giveUp", port.toString()))
+            if (server.state != DshState.RUNNING && !WslSupport.isPortOpen(port)) {
+                log(project, DshBundle.message("log.warmup.giveUp", port.toString()))
                 return
             }
-        // 2) 先等启动令牌, 再同步本项目工作空间 -> 加载页面
+            // 转发端口可能在就绪时才重新分配过 (原端口被占用): 后面同步与加载都用最终端口
+            if (server.port in 1..65535) port = server.port
+        // 2) 同步本项目工作空间 -> 加载页面 (启动令牌由同步链路在 401 时等待, 见 DshWorkspaceApi)
             if (project.isDisposed) return
-            // 新版 dsh 的首页要用启动令牌换认证 cookie, 令牌随进程输出到达 (可能晚于端口就绪):
-            // 没等到就加载页面的话, 页面会停在认证页, 用户得手动刷新一次才能用
-            if (DshServer.webTokenUrl(port) == null &&
-                !DshWebAuth.awaitToken(port, DshWebAuth.TOKEN_WAIT_MS)
-            ) {
-                log(DshBundle.message("log.authTokenLate"))
-            }
-
-            // 工作空间同步 + 语言偏好 (与面板 loadWebUi 同序), 让预热加载的页面直接落在本项目上
+            // 工作空间同步 + 语言偏好 (与面板 loadWebUi 同序), 让预热加载的页面直接落在本项目上。
+            // 这里不再单独干等启动令牌: 同步链路遇到 401 会在预算内等令牌后重试, 多窗口并发启动时
+            // 先干等一轮只会把预热整体拖慢
             val dshPath = project.basePath?.let { DshReference.dshPathFromString(it, settings.launchMode) }
             var sessionIds: List<String>? = null
             var landingSessionId: String? = null
@@ -237,7 +245,7 @@ object DshWebUiWarmup {
             var syncedPath: String? = null
             if (dshPath != null) {
                 var result: DshWorkspaceApi.WorkspaceSyncResult? = null
-                val syncDeadline = System.currentTimeMillis() + 8000
+                val syncDeadline = System.currentTimeMillis() + SYNC_BUDGET_MS
                 while (result == null && System.currentTimeMillis() < syncDeadline) {
                     result = DshWorkspaceApi.ensureProjectWorkspace(
                         port, dshPath, restoreLastSession = settings.restoreLastSession,
@@ -256,14 +264,18 @@ object DshWebUiWarmup {
                     workspaceId = result.workspaceId
                     hasContentSession = result.hasContentSession
                     syncedPath = dshPath
-                    log(DshBundle.message("log.workspaceReady", dshPath))
+                    log(project, DshBundle.message("log.workspaceReady", dshPath))
                 } else {
-                    log(DshBundle.message("log.workspaceSyncUnavailable"))
+                    log(project, DshBundle.message("log.workspaceSyncUnavailable"))
                 }
                 val dshLocale = DshWebUiInject.effectiveDshLocale(settings)
                 if (DshWorkspaceApi.syncLocalePreference(port, dshLocale)) {
-                    log(DshBundle.message("log.localeSet", dshLocale))
+                    log(project, DshBundle.message("log.localeSet", dshLocale))
                 }
+            }
+            // 令牌始终没到 (旧版 dsh 不需要它; 新版则页面会先停在认证页, 面板接管后会自动重试)
+            if (DshServer.webTokenUrl(port) == null) {
+                log(project, DshBundle.message("log.authTokenLate"))
             }
             // 3) EDT 创建浏览器 (Swing 组件安全), 挂预热注入 handler 后加载页面
             val warmed = createBrowserAndLoad(
@@ -273,7 +285,7 @@ object DshWebUiWarmup {
 
         } catch (t: Throwable) {
             LOG.warn("webui warmup failed", t)
-            log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
+            log(project, DshBundle.message("log.warmup.failed", t.message ?: "null"))
         } finally {
             // 浏览器已创建 (或创建失败): 面板的等待循环可以据此判定"预热已结束"
             slot.finished = true
@@ -304,7 +316,7 @@ object DshWebUiWarmup {
                 val b = JBCefBrowserBuilder().setClient(jbClient).build()
                 // JS 通道必须在浏览器实体创建前建立 (见 DshWebUiFileOpen.createChannel);
                 // 拦截脚本由接管该页面的面板注入
-                val fileOpenChannel = DshWebUiFileOpen.createChannel(b, project, ::log)
+                val fileOpenChannel = DshWebUiFileOpen.createChannel(b, project) { log(project, it) }
                 // JS 通道建好后立刻强制创建浏览器实体: 窗口还没显示/没被激活时页面也要开始加载
                 // (JCEF 默认懒创建, 否则要等用户把窗口切到前台才加载, 侧边栏会一直空白)
                 DshJcefSupport.forceStart(b)
@@ -316,8 +328,8 @@ object DshWebUiWarmup {
                     ) {
                         if (frame.isMain) {
                             pageLoadedFlag.set(false)
-                            DshWebUiInject.injectUiThemeLocaleOverride(browser, settings) { log(it) }
-                            DshWebUiInject.pinSessionSelection(browser, landingSessionId, sessionIds) { log(it) }
+                            DshWebUiInject.injectUiThemeLocaleOverride(browser, settings) { log(project, it) }
+                            DshWebUiInject.pinSessionSelection(browser, landingSessionId, sessionIds) { log(project, it) }
                         }
                     }
 
@@ -336,7 +348,7 @@ object DshWebUiWarmup {
                 // 先加载可保证"接管到的页面一定在加载中/已加载", 不会停在空白页
                 // 新版 dsh 的 WebUI 首页需带启动令牌访问 (换取认证 cookie)
                 val url = DshServer.webTokenUrl(port) ?: DshServer.webUrl(port)
-                log(DshBundle.message("log.warmup.loading", label, url))
+                log(project, DshBundle.message("log.warmup.loading", label, url))
                 b.loadURL(url)
                 synchronized(lock) {
                     // 期间面板已自行创建/已取走过/项目已关闭: 释放刚创建的浏览器
@@ -350,7 +362,7 @@ object DshWebUiWarmup {
                 created.set(w)
             } catch (t: Throwable) {
                 LOG.warn("webui warmup failed", t)
-                log(DshBundle.message("log.warmup.failed", t.message ?: "null"))
+                log(project, DshBundle.message("log.warmup.failed", t.message ?: "null"))
             }
         }
         if (SwingUtilities.isEventDispatchThread()) {

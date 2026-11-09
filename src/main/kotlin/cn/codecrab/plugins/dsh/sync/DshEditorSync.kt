@@ -61,7 +61,7 @@ class DshEditorSync(
     private val project: Project,
     /**
      * 本窗口 dsh 端口提供者: 每次连接时读取当前端口。
-     * 每个窗口一个 dsh 实例, 端口由实例分配 (设置变更/重建后可能变化), 因此不能在这里存死 ——
+     * 端口是本窗口的页面端口 (背后是共用的 dsh 进程; 设置变更/重建后可能变化), 因此不能在这里存死 ——
      * 否则改了端口之后文件同步还在连旧端口, 静默失效。
      */
     private val portProvider: () -> Int,

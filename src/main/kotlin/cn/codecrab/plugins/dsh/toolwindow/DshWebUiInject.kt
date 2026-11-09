@@ -92,6 +92,7 @@ object DshWebUiInject {
         browser: CefBrowser,
         landingSessionId: String?,
         sessionIds: List<String>?,
+        force: Boolean = false,
         onLog: (String) -> Unit,
     ) {
         if (landingSessionId.isNullOrBlank()) return
@@ -102,10 +103,13 @@ object DshWebUiInject {
             |  try {
             |    var LANDING = ${jsString(landingSessionId)};
             |    var IDS = $idsJs;
-            |    var raw = localStorage.getItem("dsh.sessions.current");
-            |    if (raw) {
-            |      var o = JSON.parse(raw);
-            |      if (o && typeof o.sessionId === "string" && IDS.indexOf(o.sessionId) !== -1) return;
+            |    var FORCE = ${if (force) "true" else "false"};
+            |    if (!FORCE) {
+            |      var raw = localStorage.getItem("dsh.sessions.current");
+            |      if (raw) {
+            |        var o = JSON.parse(raw);
+            |        if (o && typeof o.sessionId === "string" && IDS.indexOf(o.sessionId) !== -1) return;
+            |      }
             |    }
             |    localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: LANDING }));
             |  } catch (err) {}
@@ -115,6 +119,65 @@ object DshWebUiInject {
             browser.executeJavaScript(script, "dsh://ide-session-pin.js", 0)
         } catch (t: Throwable) {
             onLog(DshBundle.message("log.sessionPinFailed", t.message ?: "null"))
+        }
+    }
+
+    /**
+     * 在当前页面里"先钉住落地会话、再跳转"。
+     *
+     * 为什么不能让调用方"executeJavaScript(钉会话) + loadURL"两步走: 两个调用都是异步投递的,
+     * 导航可能在脚本执行前就提交, 新页面按**旧的选择**启动 —— 多窗口时全局"最近工作空间"经常是
+     * 别的项目, 于是本窗口的页面显示成别人的工作空间 (页面刚启动就写不进新选择了)。
+     * 把"写 localStorage"和"导航"放进同一个脚本同步执行, 顺序才有保证。
+     *
+     * 只在当前文档已是同一 dsh 页面时可用 (调用方负责判断); 页面不可用时退回普通加载。
+     *
+     * @param url 要跳转的地址 (可带启动令牌)
+     */
+    fun navigateWithPinnedSession(
+        browser: CefBrowser,
+        landingSessionId: String?,
+        sessionIds: List<String>?,
+        url: String,
+        force: Boolean = false,
+        onLog: (String) -> Unit,
+    ) {
+        val landingJs = if (landingSessionId.isNullOrBlank()) "null" else jsString(landingSessionId)
+        val idsJs = (sessionIds ?: emptyList())
+            .joinToString(prefix = "[", postfix = "]", separator = ",") { jsString(it) }
+        val script = """
+            |(function () {
+            |  var url = ${jsString(url)};
+            |  var go = function () {
+            |    try { location.replace(url); } catch (err) { try { location.href = url; } catch (err2) {} }
+            |  };
+            |  try {
+            |    var LANDING = $landingJs;
+            |    var IDS = $idsJs;
+            |    var FORCE = ${if (force) "true" else "false"};
+            |    if (LANDING) {
+            |      var raw = localStorage.getItem("dsh.sessions.current");
+            |      var keep = false;
+            |      if (raw) {
+            |        try {
+            |          var o = JSON.parse(raw);
+            |          keep = !!(o && typeof o.sessionId === "string" && IDS.indexOf(o.sessionId) !== -1);
+            |        } catch (err) {}
+            |      }
+            |      if (!keep || FORCE) localStorage.setItem("dsh.sessions.current", JSON.stringify({ sessionId: LANDING }));
+            |    }
+            |  } catch (err) {}
+            |  go();
+            |})();
+        """.trimMargin()
+        try {
+            browser.executeJavaScript(script, "dsh://ide-navigate.js", 0)
+        } catch (t: Throwable) {
+            onLog(DshBundle.message("log.sessionPinFailed", t.message ?: "null"))
+            try {
+                browser.loadURL(url)
+            } catch (_: Throwable) {
+            }
         }
     }
 
