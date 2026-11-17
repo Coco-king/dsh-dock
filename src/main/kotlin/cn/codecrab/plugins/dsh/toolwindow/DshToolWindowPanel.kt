@@ -393,6 +393,8 @@ class DshToolWindowPanel(
         // JS 通道建好后立刻强制创建浏览器实体 (JCEF 默认懒创建): 面板所在窗口还没被激活/
         // 还藏在别的窗口后面时页面也要开始加载, 不要等用户碰到这个窗口才加载
         DshJcefSupport.forceStart(b)
+        // 麦克风授权: dsh 的语音输入 (听写) 要用页面里的 getUserMedia 录音, 内置浏览器不会弹授权窗口
+        DshWebUiMicrophone.install(jbClient, b.cefBrowser, ::appendLog)
         jbClient.addLoadHandler(createInjectLoadHandler(), b.cefBrowser)
         jcefAvailable = true
         browser = b

@@ -35,10 +35,13 @@ no terminal or separate browser needed.
 9. **Sidebar locate and highlight**: Opening the session list in the dsh sidebar — and switching to another
    workspace or session afterwards — scrolls straight to the current session and highlights the workspace
    group it belongs to, so long session lists stay navigable
-10. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
+10. **Voice dictation out of the box**: The embedded browser grants the microphone to the local dsh page, so
+   dsh's voice input (dictation) records right away instead of waiting for a browser permission prompt that
+   the tool window cannot show
+11. **Windows launch note**: dsh is launched through a hidden PowerShell process — if your security
    software intercepts it, please allow it
-11. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
-12. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
+12. **Multi-IDE support**: Works in JetBrains IDEs (IntelliJ IDEA, PyCharm, WebStorm, GoLand, etc.), 2024.2 and later
+13. **Open source**: GitHub <https://github.com/Coco-king/dsh-dock> · Gitee mirror <https://gitee.com/kkcoco/dsh-idea-plugin>
 
 **中文**
 
@@ -67,9 +70,11 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
    不再使用 dsh 侧边栏预览；打不开时仍走 dsh 预览
 9. **侧边栏自动定位**：打开 dsh 侧边栏的会话列表时（以及之后切换工作空间/会话时），自动定位到当前会话，
    并高亮它所在的工作空间分组，会话很多时也能一眼看清"我在哪个工作空间、当前会话在哪"
-10. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
-11. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
-12. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
+10. **语音听写开箱即用**：内置浏览器自动为本机 dsh 页面放行麦克风，dsh 的语音输入（听写）点开即可录音，
+   不再卡在工具窗口里无法弹出的浏览器授权窗口上
+11. **Windows 启动说明**：通过隐藏的 PowerShell 调用启动命令，如遇安全软件拦截请放行
+12. **多 IDE 支持**：兼容 JetBrains 全系 IDE（IntelliJ IDEA / PyCharm / WebStorm / GoLand 等），2024.2 及之后版本
+13. **项目开源**：GitHub <https://github.com/Coco-king/dsh-dock> · Gitee 镜像 <https://gitee.com/kkcoco/dsh-idea-plugin>
 <!-- Plugin description end -->
 
 ## 开源地址
@@ -89,6 +94,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
     若安全软件（杀毒/防火墙）弹出拦截提示，请选择**允许/放行**，否则可能导致启动失败
   - 两种启动方式的**端口与附加参数分别配置**（互不影响），切换启动方式无需改回设置
 - **内置浏览器窗口**：侧边栏内嵌 JCEF 浏览器，WebUI 直接显示在工具窗口中，无需打开系统浏览器
+- **语音听写可用**：内置浏览器自动为本机 dsh 页面放行麦克风（只放行麦克风、且只针对本机页面），
+  dsh 的语音输入（听写）点开即可录音，不再卡在无法弹出的浏览器授权窗口上；
+  系统层面关闭了麦克风权限时仍会失败，需在系统隐私设置中允许桌面应用使用麦克风
 - **端口已有 dsh 也不复用**：如果端口已被监听（你自己启动的 dsh、或上个会话遗留的进程），插件
   **不会复用它**（那等于把页面来源让给别人，页面状态会串），而是顺延到下一个空闲端口启动
   **插件自己的** dsh；外部启动的 dsh 也不会被插件误停（插件只停自己启动的进程）
@@ -222,6 +230,9 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
 - **两个端口是两码事**：dsh 进程只监听一个端口（页面上不用它，日志里的 `dsh web: http://127.0.0.1:<进程端口>/`
   就是它），各窗口另有自己的页面端口（浏览器地址栏里的 `localhost:<页面端口>`）。工具窗口状态栏会同时
   列出"页面 X / 进程 Y"，悬停有说明，免得把两者混为一谈
+- **麦克风授权**：内置浏览器（JCEF/CEF）没有系统浏览器那种站点授权弹窗，CEF 默认直接拒绝
+  `getUserMedia` 的媒体请求。插件在创建浏览器时注册权限处理器：只对「与当前页面同源、且主机是
+  本机回环地址」的请求放行麦克风（相机等视频采集一律拒绝），dsh 的语音输入（听写）因此能直接录音
 - **工作空间跟随项目**：dsh 的"工作空间"是持久化注册表（存于 `~/.dsh/storages`，跨进程重启保留），
   WebUI 启动时自动选中**最近活跃的工作空间**（按会话时间排序），与 dsh 进程的启动目录无关。
   因此插件在每次加载 WebUI 前，通过 dsh 的 `/api` 通道把当前项目注册为工作空间
@@ -300,3 +311,7 @@ DeepSeek 模型对话，无需终端、无需另开浏览器。
   （日志里会出现「已同步第 N 轮改动」），长对话进行中请稍候。旧版 dsh 走兼容的事件流通道；
   仍不同步时可手动刷新一次 WebUI 或重新打开文件；另外，文件在 IDEA 里有**未保存修改**时
   不会被自动覆盖（这是防丢改动的保护）
+- **语音听写没反应 / 提示麦克风权限已关闭**：插件已为内置浏览器里的本机 dsh 页面自动放行麦克风，
+  正常情况下点听写按钮即可录音。仍失败时先检查系统麦克风权限（Windows：设置 → 隐私和安全性 → 麦克风，
+  打开「允许桌面应用访问你的麦克风」）以及系统里是否有可用的输入设备；工具窗口日志里会记录
+  放行/拒绝麦克风请求的原因

@@ -320,6 +320,8 @@ object DshWebUiWarmup {
                 // JS 通道建好后立刻强制创建浏览器实体: 窗口还没显示/没被激活时页面也要开始加载
                 // (JCEF 默认懒创建, 否则要等用户把窗口切到前台才加载, 侧边栏会一直空白)
                 DshJcefSupport.forceStart(b)
+                // 麦克风授权随浏览器一起建立: 面板接管预热浏览器后不再重复挂载 (见 DshWebUiMicrophone)
+                DshWebUiMicrophone.install(jbClient, b.cefBrowser) { log(project, it) }
                 val handler = object : CefLoadHandlerAdapter() {
                     override fun onLoadStart(
                         browser: CefBrowser,

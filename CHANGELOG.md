@@ -1,5 +1,15 @@
 # Changelog / 变更日志
 
+## [1.5.1] - 2026-11-17
+
+### 中文 (Chinese)
+
+- **新增（Added）**：内置浏览器支持麦克风：dsh 的语音输入（听写）点开即可录音，不再卡在工具窗口里无法弹出的浏览器授权窗口上（只对本机 dsh 页面放行，且只放行麦克风）
+
+### English
+
+- **Added**: Microphone support in the embedded browser: dsh's voice input (dictation) records right away instead of being blocked by a browser permission prompt the tool window cannot show (local dsh page only, microphone only)
+
 ## [1.5.0] - 2026-11-09
 
 ### 中文 (Chinese)
